@@ -18,7 +18,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 
-MAX_FILE_SIZE = 100 * 1024 * 1024  
+MAX_FILE_SIZE = 50 * 1024 * 1024  
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
