@@ -3,5 +3,9 @@ uvicorn
 pandas
 numpy
 scikit-learn
+lightgbm
+nltk
 python-dotenv
 slowapi
+python-multipart
+scipy
