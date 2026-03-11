@@ -22,7 +22,7 @@ MAX_FILE_SIZE = 50 * 1024 * 1024
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000", "https://athena-alpha-hazel.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
