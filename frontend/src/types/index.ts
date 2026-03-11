@@ -1,6 +1,6 @@
 export type DataMode = "labeled" | "unlabeled";
 export type Profile = "standard" | "finance" | "healthcare" | "nlp" | "custom";
-export type AppView = "upload" | "report" | "compare";
+export type AppView = "landing" | "upload" | "report" | "compare";
 
 export interface AnalysisResult {
   mode: DataMode;
