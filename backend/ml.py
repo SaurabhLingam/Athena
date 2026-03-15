@@ -698,6 +698,10 @@ class MLdiagnosticskit:
 
         X = df[usable_cols].copy()
 
+        MAX_CELLS = 2_000_000
+        if X.shape[0] * X.shape[1] > MAX_CELLS:
+            max_rows = MAX_CELLS // X.shape[1]
+            X = X.sample(n=max_rows, random_state = 42)
         for c in numeric_cols:
             if c in X.columns:
                 X[c] = X[c].fillna(X[c].median())
@@ -741,7 +745,7 @@ class MLdiagnosticskit:
             n_estimators=100,
             contamination="auto",
             random_state=42,
-            n_jobs=-1
+
         )
 
         preds = iso.fit_predict(X_scaled)
@@ -818,7 +822,7 @@ class MLdiagnosticskit:
                 batch_size=1024
             )
 
-            km.fit(X_scaled)
+            km.fit(X_metric)
             labels_metric = km.predict(X_metric)
 
             sil = silhouette_score(X_metric, labels_metric)
