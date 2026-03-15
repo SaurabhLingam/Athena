@@ -345,8 +345,10 @@ class EdaToolKit:
 
         if not numeric_cols or len(numeric_cols) < 2:
             return {}
-
-        corr_matrix = df[numeric_cols].corr().abs()
+        df_sample = df[numeric_cols]
+        if len(df_sample) > 50_000:
+            df_sample = df_sample.sample(n=50_000, random_state=42)
+        corr_matrix = df_sample.corr().abs()
 
         upper = corr_matrix.where(
             np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
@@ -451,6 +453,9 @@ class EdaToolKit:
         from sklearn.metrics.pairwise import cosine_similarity
 
         X = df[numeric_cols].copy()
+
+        if len(X) > 50_000:
+            X = X.sample(n=50_000, random_state=42)
 
 
         X = X.fillna(X.median())
@@ -612,7 +617,10 @@ class EdaToolKit:
                     log_transform.add(col)
 
         if len(numeric_features) >= 2:
-            corr_matrix = df[numeric_features].corr().abs()
+            df_num = df[numeric_features]
+            if len(df_num) > 50_000:
+                df_num = df_num.sample(n=50_000, random_state=42)
+            corr_matrix = df_num.corr().abs()
             for i in range(len(corr_matrix.columns)):
                 for j in range(i):
                     corr_val = corr_matrix.iloc[i, j]
