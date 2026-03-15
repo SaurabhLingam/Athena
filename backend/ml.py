@@ -696,20 +696,26 @@ class MLdiagnosticskit:
                 f"Identifier-like columns excluded: {list(set(identifier_cols + entity_keys))}"
             )
 
-        import gc 
+        import gc
         gc.collect()
-        X = df[usable_cols].copy()
 
+        # Sample BEFORE copying to avoid full RAM allocation
         MAX_CELLS = 500_000
-        if X.shape[0] * X.shape[1] > MAX_CELLS:
-            max_rows = MAX_CELLS // X.shape[1]
-            X = X.sample(n=max_rows, random_state = 42)
+        n_cols = len(usable_cols)
+        if df.shape[0] * n_cols > MAX_CELLS:
+            max_rows = max(500, MAX_CELLS // n_cols)
+            X = df[usable_cols].sample(n=max_rows, random_state=42).copy()
+        else:
+            X = df[usable_cols].copy()
+
+        gc.collect()
+
         for c in numeric_cols:
             if c in X.columns:
                 X[c] = X[c].fillna(X[c].median())
 
         if X.shape[1] > 50:
-            variances = X.var(numeric_only = True)
+            variances = X.var(numeric_only=True)
             top_cols = variances.nlargest(50).index.tolist()
             X = X[top_cols]
 
@@ -719,7 +725,7 @@ class MLdiagnosticskit:
 
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
-        del(X)
+        del X
         gc.collect()
 
         binary_cols = [c for c in usable_cols if df[c].dropna().nunique() <= 2]
