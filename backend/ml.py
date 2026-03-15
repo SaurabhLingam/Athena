@@ -696,9 +696,11 @@ class MLdiagnosticskit:
                 f"Identifier-like columns excluded: {list(set(identifier_cols + entity_keys))}"
             )
 
+        import gc 
+        gc.collect()
         X = df[usable_cols].copy()
 
-        MAX_CELLS = 2_000_000
+        MAX_CELLS = 500_000
         if X.shape[0] * X.shape[1] > MAX_CELLS:
             max_rows = MAX_CELLS // X.shape[1]
             X = X.sample(n=max_rows, random_state = 42)
@@ -706,12 +708,19 @@ class MLdiagnosticskit:
             if c in X.columns:
                 X[c] = X[c].fillna(X[c].median())
 
+        if X.shape[1] > 50:
+            variances = X.var(numeric_only = True)
+            top_cols = variances.nlargest(50).index.tolist()
+            X = X[top_cols]
+
         for c in categorical_cols:
             if c in X.columns:
                 X[c] = pd.factorize(X[c].fillna("NA").astype(str))[0]
 
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
+        del(X)
+        gc.collect()
 
         binary_cols = [c for c in usable_cols if df[c].dropna().nunique() <= 2]
         binary_ratio = len(binary_cols) / len(usable_cols) if usable_cols else 0
@@ -742,7 +751,7 @@ class MLdiagnosticskit:
 
     def run_anomaly_detection(self, X_scaled, binary_ratio: float = 0.0):
         iso = IsolationForest(
-            n_estimators=100,
+            n_estimators=50,
             contamination="auto",
             random_state=42,
 
