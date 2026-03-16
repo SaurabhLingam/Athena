@@ -5,6 +5,8 @@ from fastapi.responses import Response
 from eda import EdaToolKit
 from dotenv import load_dotenv
 import os
+import tempfile
+import shutil
 from pathlib import Path
 import math
 import gc
@@ -16,10 +18,7 @@ from starlette.requests import Request
 
 limiter = Limiter(key_func=get_remote_address)
 
-
-
-
-MAX_FILE_SIZE = 50 * 1024 * 1024  
+MAX_FILE_SIZE = 50 * 1024 * 1024
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -28,7 +27,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -57,17 +55,30 @@ def safe_run(func, *args, **kwargs):
     except Exception as e:
         return {"status": "error", "error_msg": str(e)}
 
-def read_csv_sample(upload_file, sample_rows=150_000):
-    upload_file.file.seek(0)
+def stream_to_disk(upload_file) -> Path:
+    """Stream UploadFile to a temp file on disk, freeing the in-memory buffer."""
+    suffix = Path(upload_file.filename).suffix or ".csv"
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    try:
+        upload_file.file.seek(0)
+        shutil.copyfileobj(upload_file.file, tmp)
+        tmp.flush()
+    finally:
+        tmp.close()
+    return Path(tmp.name)
+
+def read_csv_from_path(path: Path, sample_rows: int = 150_000) -> pd.DataFrame:
+    """Read CSV from a disk path with encoding fallback, then delete the temp file."""
     try:
         try:
-            df = pd.read_csv(upload_file.file, encoding="utf-8", nrows=sample_rows)
+            df = pd.read_csv(path, encoding="utf-8", nrows=sample_rows)
         except UnicodeDecodeError:
-            upload_file.file.seek(0)
-            df = pd.read_csv(upload_file.file, encoding="latin1", nrows=sample_rows)
+            df = pd.read_csv(path, encoding="latin1", nrows=sample_rows)
         return df
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to read CSV sample: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to read CSV: {str(e)}")
+    finally:
+        path.unlink(missing_ok=True)  # always clean up temp file
 
 @app.post("/analyze")
 @limiter.limit("5/minute")
@@ -83,7 +94,8 @@ def analyze_csv(request: Request, file: UploadFile = File(...), data_type: str =
     if data_type not in {"unlabeled", "labeled"}:
         raise HTTPException(400, detail="data_type must be unlabeled, labeled")
 
-    df = read_csv_sample(file)
+    tmp_path = stream_to_disk(file)       # stream to disk first
+    df = read_csv_from_path(tmp_path)     # read from disk, temp file auto-deleted
 
     if df.empty:
         raise HTTPException(status_code=400, detail="CSV file is empty")
@@ -95,7 +107,7 @@ def analyze_csv(request: Request, file: UploadFile = File(...), data_type: str =
     free_text_result = safe_run(eda.free_text_detection, df, target_col)
     text_cols = [c["column"] for c in free_text_result.get("free_text_columns", [])] if free_text_result else []
     nlp_result = safe_run(eda.nlp_analysis, df, text_cols, target_col) if text_cols else None
-    # Logic grouped inside safe_run to handle edge-case crashes
+
     base_eda = {
         "basic": safe_run(eda.basicdatainfo, df),
         "col_views": column_views,
@@ -113,10 +125,10 @@ def analyze_csv(request: Request, file: UploadFile = File(...), data_type: str =
     if data_type == "unlabeled":
         routing_report = ml_kit.run_diagnostics(df=df, col_views=column_views, mode="unlabeled")
         ml_report = routing_report
-        
+
         if routing_report.get("status") == "ready_for_unlabeled_pipeline":
             ml_report = safe_run(ml_kit.unlabeled_diagnostics, df=df, col_views=column_views)
-        
+
         result = {"mode": "unlabeled", "eda": base_eda, "ml_diagnostics": ml_report}
 
     elif data_type == "labeled":
@@ -164,8 +176,10 @@ def compare_datasets(request: Request, train_file: UploadFile = File(...), test_
     if not train_file.filename.endswith(".csv") or not test_file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Both files must be CSV")
 
-    train_df = read_csv_sample(train_file)
-    test_df = read_csv_sample(test_file)
+    train_path = stream_to_disk(train_file)
+    test_path = stream_to_disk(test_file)
+    train_df = read_csv_from_path(train_path)
+    test_df = read_csv_from_path(test_path)
 
     if train_df.empty or test_df.empty:
         raise HTTPException(status_code=400, detail="One or both files are empty")
