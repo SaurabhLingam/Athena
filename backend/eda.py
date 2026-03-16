@@ -193,8 +193,9 @@ class EdaToolKit:
             .to_dict()
         )
 
-        # Systematic missingness (co-occurrence)
-        missing_matrix = feature_df.isnull().astype(int)
+        # Systematic missingness (co-occurrence) — sample to cap RAM usage
+        sample_df = feature_df if len(feature_df) <= 50_000 else feature_df.sample(n=50_000, random_state=42)
+        missing_matrix = sample_df.isnull().astype(int)
         valid_cols = missing_matrix.columns[missing_matrix.mean() >= min_missing_frac]
         filtered = missing_matrix[valid_cols]
 
@@ -222,24 +223,36 @@ class EdaToolKit:
     def numeric_summary(self, df: pd.DataFrame, target_col: str | None = None):
         col_views = self.build_column_views(df, target_col)
         numeric_cols = col_views["numeric_features"]
-        numeric_df = df[numeric_cols].copy()
-        numeric_df = numeric_df.loc[:, numeric_df.nunique() != 1]
-        if numeric_df.empty:
+        if not numeric_cols:
             return []
-        stats = numeric_df.agg([
-            'count', 'mean', 'std', 'min', 'max',
-            lambda x: x.quantile(0.25),
-            lambda x: x.quantile(0.75),
-            lambda x: x.skew(),
-            lambda x: (x == 0).mean()
-        ]).T
 
-        stats.columns = ['count', 'mean', 'std', 'min', 'max', 'Q1', 'Q3', 'skewness', 'zero_pct']
+        # Drop constant columns without copying the whole df
+        numeric_cols = [c for c in numeric_cols if df[c].nunique() != 1]
+        if not numeric_cols:
+            return []
 
-        stats['iqr'] = stats['Q3'] - stats['Q1']
-        stats['missing_pct'] = (df[numeric_cols].isnull().mean() * 100).to_dict()
-
-        return stats.reset_index().rename(columns={'index': 'column'}).to_dict('records')
+        results = []
+        for col in numeric_cols:
+            s = df[col]
+            non_null = s.dropna()
+            if non_null.empty:
+                continue
+            q1, q3 = float(non_null.quantile(0.25)), float(non_null.quantile(0.75))
+            results.append({
+                "column": col,
+                "count": int(non_null.count()),
+                "mean": float(non_null.mean()),
+                "std": float(non_null.std()),
+                "min": float(non_null.min()),
+                "max": float(non_null.max()),
+                "Q1": q1,
+                "Q3": q3,
+                "skewness": self.safe_float(non_null.skew()),
+                "zero_pct": float((s == 0).mean()),
+                "iqr": q3 - q1,
+                "missing_pct": float(s.isnull().mean() * 100),
+            })
+        return results
 
     def categorical_summary(self, df: pd.DataFrame, target_col: str | None = None):
         col_views = self.build_column_views(df, target_col)
@@ -345,9 +358,7 @@ class EdaToolKit:
 
         if not numeric_cols or len(numeric_cols) < 2:
             return {}
-        df_sample = df[numeric_cols]
-        if len(df_sample) > 50_000:
-            df_sample = df_sample.sample(n=50_000, random_state=42)
+        df_sample = df[numeric_cols] if len(df) <= 50_000 else df[numeric_cols].sample(n=50_000, random_state=42)
         corr_matrix = df_sample.corr().abs()
 
         upper = corr_matrix.where(
@@ -452,13 +463,9 @@ class EdaToolKit:
         from sklearn.preprocessing import RobustScaler
         from sklearn.metrics.pairwise import cosine_similarity
 
-        X = df[numeric_cols].copy()
-
-        if len(X) > 50_000:
-            X = X.sample(n=50_000, random_state=42)
-
-
-        X = X.fillna(X.median())
+        # Sample BEFORE selecting/copying columns to reduce peak RAM
+        idx = df.index if len(df) <= 50_000 else df.sample(n=50_000, random_state=42).index
+        X = df.loc[idx, numeric_cols].fillna(df[numeric_cols].median())
 
 
         scaler = RobustScaler()
@@ -617,9 +624,7 @@ class EdaToolKit:
                     log_transform.add(col)
 
         if len(numeric_features) >= 2:
-            df_num = df[numeric_features]
-            if len(df_num) > 50_000:
-                df_num = df_num.sample(n=50_000, random_state=42)
+            df_num = df[numeric_features] if len(df) <= 50_000 else df[numeric_features].sample(n=50_000, random_state=42)
             corr_matrix = df_num.corr().abs()
             for i in range(len(corr_matrix.columns)):
                 for j in range(i):

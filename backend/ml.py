@@ -352,8 +352,16 @@ class MLdiagnosticskit:
             self.add_penalty("Baseline Probe", "No usable feature columns for baseline training")
             return {"mean_score": 0, "std_score": 0, "fold_scores": [], "metric": None, "n_folds": n_folds}
 
-        X = df[feature_cols].copy()
-        y_raw = df[target_col].copy()
+        # Cap rows before copying to avoid full-df RAM spike
+        MAX_PROBE_ROWS = 80_000
+        if len(df) > MAX_PROBE_ROWS:
+            probe_df = df.sample(n=MAX_PROBE_ROWS, random_state=42)
+        else:
+            probe_df = df
+
+        X = probe_df[feature_cols].copy()
+        y_raw = probe_df[target_col].copy()
+        del probe_df
 
         if task_type == "classification":
             unique_labels = sorted(y_raw.unique())
@@ -464,6 +472,7 @@ class MLdiagnosticskit:
                 "val": [round(v, 6) for v in val_curve],
             })
             fold_scores.append(score)
+            del X_train, X_val, train_data, val_data, model
 
         mean_score = float(np.mean(fold_scores))
         std_score = float(np.std(fold_scores))
@@ -531,8 +540,15 @@ class MLdiagnosticskit:
         if len(feature_cols) == 0:
             return {"status": "failed", "issue": "No usable feature columns for stability analysis"}
 
-        X_full = df[feature_cols].copy()
-        y_full = df[target_col].copy()
+        # Cap upfront — stability checks don't need the full dataset
+        MAX_STABILITY_ROWS = 60_000
+        if len(df) > MAX_STABILITY_ROWS:
+            base_df = df.sample(n=MAX_STABILITY_ROWS, random_state=42)
+        else:
+            base_df = df
+
+        X_full = base_df[feature_cols]  # no copy — we slice per run
+        y_full = base_df[target_col]
 
         scores = []
         best_iters = []
@@ -540,7 +556,7 @@ class MLdiagnosticskit:
 
         for _ in range(n_runs):
 
-            sample_idx = np.random.choice(len(df), int(len(df) * sample_frac), replace=False)
+            sample_idx = np.random.choice(len(base_df), int(len(base_df) * sample_frac), replace=False)
             X = X_full.iloc[sample_idx].copy()
             y_raw = y_full.iloc[sample_idx].copy()
 
@@ -623,6 +639,7 @@ class MLdiagnosticskit:
 
             score = float(metric_fn(y_val, y_pred))
             scores.append(score)
+            del X_train, X_val, train_data, val_data, model, X, y_raw
 
         mean_score = float(np.mean(scores))
         std_score = float(np.std(scores))
@@ -732,8 +749,12 @@ class MLdiagnosticskit:
         binary_ratio = len(binary_cols) / len(usable_cols) if usable_cols else 0
 
         anomaly_report = self.run_anomaly_detection(X_scaled, binary_ratio=binary_ratio)
+        gc.collect()
         clustering_report = self.run_clustering_diagnostics(X_scaled)
+        gc.collect()
         stability_report = self.run_unlabeled_stability(X_scaled)
+        del X_scaled
+        gc.collect()
 
         ml_readiness_score = int(
             np.mean([

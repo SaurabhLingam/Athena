@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import os
 from pathlib import Path
 import math
+import gc
 from profiles import get_profile
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -56,7 +57,7 @@ def safe_run(func, *args, **kwargs):
     except Exception as e:
         return {"status": "error", "error_msg": str(e)}
 
-def read_csv_sample(upload_file, sample_rows=200_000):
+def read_csv_sample(upload_file, sample_rows=150_000):
     upload_file.file.seek(0)
     try:
         try:
@@ -150,7 +151,10 @@ def analyze_csv(request: Request, file: UploadFile = File(...), data_type: str =
     else:
         raise HTTPException(400, detail="invalid data type")
 
-    return sanitize_for_json(result)
+    final_result = sanitize_for_json(result)
+    del df
+    gc.collect()
+    return final_result
 
 @app.post("/compare")
 @limiter.limit("5/minute")
