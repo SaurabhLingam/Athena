@@ -36,3 +36,7 @@ Thumbs.db
 
 # NLTK data
 nltk_data/
+
+backend/static/
+build/
+dist/

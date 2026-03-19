@@ -210,6 +210,59 @@ function svgHistogram(
   `;
 }
 
+function svgSimpleLineChart(
+  values: (number | null)[],
+  dates: string[],
+  color: string,
+  overlay?: { values: (number | null)[]; color: string; name: string }
+): string {
+  const W = 700, H = 140;
+  const PAD = { top: 10, right: 20, bottom: 24, left: 50 };
+  const CW = W - PAD.left - PAD.right;
+  const CH = H - PAD.top - PAD.bottom;
+  const clean = values.filter((v): v is number => v !== null);
+  if (clean.length === 0) return "";
+  const minV = Math.min(...clean), maxV = Math.max(...clean);
+  const range = maxV - minV || 1;
+  const toX = (i: number) => PAD.left + (i / (values.length - 1)) * CW;
+  const toY = (v: number) => PAD.top + CH - ((v - minV) / range) * CH;
+ 
+  const pts = values
+    .map((v, i) => v !== null ? `${toX(i)},${toY(v)}` : null)
+    .filter(Boolean).join(" L ");
+ 
+  const overlayPts = overlay?.values
+    .map((v, i) => v !== null ? `${toX(i)},${toY(v)}` : null)
+    .filter(Boolean).join(" L ") ?? "";
+ 
+  const xStep = Math.max(1, Math.floor(dates.length / 6));
+  const xLabels = dates
+    .filter((_, i) => i % xStep === 0)
+    .map((d, i) => {
+      const idx = i * xStep;
+      return `<text x="${toX(idx)}" y="${H - 4}" text-anchor="middle" fill="#4d6478" font-size="8" font-family="IBM Plex Mono,monospace">${d.slice(0, 10)}</text>`;
+    }).join("");
+ 
+  const legend = overlay
+    ? `<rect x="${PAD.left}" y="${H - 8}" width="16" height="3" fill="${color}"/>
+       <text x="${PAD.left + 20}" y="${H - 4}" fill="#8fa8c0" font-size="8" font-family="IBM Plex Mono,monospace">Value</text>
+       <rect x="${PAD.left + 80}" y="${H - 8}" width="16" height="3" fill="${overlay.color}" stroke-dasharray="3,2"/>
+       <text x="${PAD.left + 100}" y="${H - 4}" fill="#8fa8c0" font-size="8" font-family="IBM Plex Mono,monospace">${overlay.name}</text>`
+    : "";
+ 
+  return `
+    <svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:0.5rem 0">
+      <rect width="${W}" height="${H}" fill="transparent"/>
+      <line x1="${PAD.left}" x2="${PAD.left}" y1="${PAD.top}" y2="${PAD.top + CH}" stroke="#1e2d3d"/>
+      <line x1="${PAD.left}" x2="${PAD.left + CW}" y1="${PAD.top + CH}" y2="${PAD.top + CH}" stroke="#1e2d3d"/>
+      <path d="M ${pts}" fill="none" stroke="${color}" stroke-width="1.5"/>
+      ${overlayPts ? `<path d="M ${overlayPts}" fill="none" stroke="${overlay!.color}" stroke-width="2" stroke-dasharray="5,3"/>` : ""}
+      ${xLabels}
+      ${legend}
+    </svg>`;
+}
+ 
+
 export function generateReport(result: AnalysisResult, filename: string): void {
   const { eda, ml_diagnostics: ml } = result;
   const timestamp = new Date().toLocaleString();
@@ -621,6 +674,174 @@ export function generateReport(result: AnalysisResult, filename: string): void {
     }).join("");
   }
 
+  let tsHtml = "";
+  const ts = result.timeseries;
+  if (ts?.detected && ts.eda && ts.baselines) {
+    const stationarity = ts.eda.stationarity;
+    const verdictColor =
+      stationarity.verdict === "stationary" ? "#00ff88" :
+      stationarity.verdict === "non_stationary" ? "#ff4466" : "#ffcc00";
+ 
+    const stationarityTable = buildTable(
+      ["Test", "Statistic", "p-value", "Result", "Interpretation"],
+      [
+        [
+          "ADF",
+          fmt(stationarity.adf?.statistic, 4),
+          fmt(stationarity.adf?.p_value, 4),
+          stationarity.adf?.is_stationary
+            ? `<span style="color:#00ff88">STATIONARY</span>`
+            : `<span style="color:#ff4466">NON-STATIONARY</span>`,
+          stationarity.adf?.interpretation ?? "—",
+        ],
+        [
+          "KPSS",
+          fmt(stationarity.kpss?.statistic, 4),
+          fmt(stationarity.kpss?.p_value, 4),
+          stationarity.kpss?.is_stationary
+            ? `<span style="color:#00ff88">STATIONARY</span>`
+            : `<span style="color:#ff4466">NON-STATIONARY</span>`,
+          stationarity.kpss?.interpretation ?? "—",
+        ],
+      ]
+    );
+ 
+    const rollingSvg = ts.eda.rolling_stats?.values?.length
+      ? svgSimpleLineChart(
+          ts.eda.rolling_stats.values,
+          ts.eda.rolling_stats.dates,
+          "#00d4ff",
+          { values: ts.eda.rolling_stats.mean, color: "#00ff88", name: "Rolling Mean" }
+        )
+      : "";
+ 
+    const rankingTable = ts.baselines.ranking?.length
+      ? buildTable(
+          ["Rank", "Model", "RMSE", "MAE", "MAPE"],
+          ts.baselines.ranking.map((r, i) => [
+            i === 0 ? `<span style="color:#00ff88">#1</span>` : `#${i + 1}`,
+            `<span style="color:${i === 0 ? "#00d4ff" : "#8fa8c0"}">${r.model}</span>`,
+            `<span style="color:#00d4ff">${fmt(r.rmse, 4)}</span>`,
+            fmt(r.mae, 4),
+            r.mape != null ? `${r.mape.toFixed(2)}%` : "—",
+          ])
+        )
+      : "";
+ 
+    const missingTs = ts.eda.missing_timestamps;
+    const gapHtml = missingTs && !(missingTs as any).error
+      ? missingTs.gap_count === 0
+        ? alertBox("No gaps in the time index — complete coverage.", "success")
+        : alertBox(
+            `${missingTs.gap_count} gap(s) detected. Coverage: ${missingTs.coverage_pct}%. ` +
+            (missingTs.gaps.length ? `First gaps: ${missingTs.gaps.slice(0, 3).join(", ")}` : ""),
+            "warning"
+          )
+      : "";
+ 
+    // Model errors
+    const modelErrors = (["naive", "moving_average", "exp_smoothing", "arima"] as const)
+      .map(m => {
+        const b = ts.baselines![m];
+        return b?.error ? alertBox(`${m}: ${b.error}`, "warning") : "";
+      }).join("");
+ 
+    tsHtml = section("TIME SERIES ANALYSIS", `
+      <div class="stat-grid">
+        <div class="stat-box"><div class="stat-label">DATETIME COLUMN</div><div class="stat-value" style="font-size:0.85rem;color:#00d4ff">${ts.datetime_col}</div></div>
+        <div class="stat-box"><div class="stat-label">TARGET COLUMN</div><div class="stat-value" style="font-size:0.85rem;color:#00d4ff">${ts.target_col}</div></div>
+        <div class="stat-box"><div class="stat-label">OBSERVATIONS</div><div class="stat-value">${(ts.n_observations ?? 0).toLocaleString()}</div></div>
+        <div class="stat-box"><div class="stat-label">FREQUENCY</div><div class="stat-value">${ts.freq}</div></div>
+        <div class="stat-box"><div class="stat-label">MEAN</div><div class="stat-value">${fmt(ts.eda.summary.mean)}</div></div>
+        <div class="stat-box"><div class="stat-label">STD DEV</div><div class="stat-value">${fmt(ts.eda.summary.std)}</div></div>
+      </div>
+ 
+      <div class="section-subtitle">STATIONARITY VERDICT</div>
+      <div style="margin-bottom:0.75rem">${badge(stationarity.verdict.replace("_", " ").toUpperCase(), verdictColor)}</div>
+      ${stationarity.needs_differencing ? alertBox("Series needs differencing. ARIMA auto-detected this — see order in the baseline table.", "warning") : ""}
+      ${stationarityTable}
+ 
+      ${rollingSvg ? `<div class="section-subtitle" style="margin-top:1rem">SERIES + ROLLING MEAN (window = ${ts.eda.rolling_stats.window})</div>${rollingSvg}` : ""}
+ 
+      ${gapHtml}
+ 
+      ${rankingTable ? `<div class="section-subtitle" style="margin-top:1rem">BASELINE MODEL RANKING</div>${rankingTable}` : ""}
+      ${ts.baselines.ranking?.[0] ? alertBox(`Best model: ${ts.baselines.ranking[0].model} — RMSE ${fmt(ts.baselines.ranking[0].rmse, 4)}`, "success") : ""}
+      ${modelErrors}
+    `);
+  }
+  let arenaHtml = "";
+  const arena = result.model_arena;
+  if (arena?.status === "ok" && arena.ranking && arena.ranking.length > 0) {
+    const isRegression = arena.task_type === "regression";
+    const metricLabel = isRegression ? "RMSE (lower is better)" : "BALANCED ACCURACY (higher is better)";
+ 
+    // SVG bar chart
+    const maxScore = Math.max(...arena.ranking.map((r: any) => r.score ?? 0));
+    const W = 600, BAR_H = 24, GAP = 10, LABEL_W = 160, VAL_W = 60;
+    const CHART_W = W - LABEL_W - VAL_W;
+    const chartH = arena.ranking.length * (BAR_H + GAP) + 20;
+    const colors = ["#00d4ff", "#00ff88", "#4d6478", "#4d6478", "#4d6478"];
+ 
+    const bars = arena.ranking.map((r: any, i: number) => {
+      const y = i * (BAR_H + GAP) + 10;
+      const barW = maxScore > 0 ? ((r.score ?? 0) / maxScore) * CHART_W : 0;
+      const color = colors[i] ?? "#4d6478";
+      return `
+        <text x="${LABEL_W - 6}" y="${y + BAR_H / 2 + 4}" text-anchor="end" fill="${i === 0 ? "#e2eaf4" : "#8fa8c0"}" font-size="10" font-family="IBM Plex Mono,monospace">${r.model}</text>
+        <rect x="${LABEL_W}" y="${y}" width="${Math.max(barW, 2)}" height="${BAR_H}" fill="${color}" rx="3"/>
+        <text x="${LABEL_W + barW + 6}" y="${y + BAR_H / 2 + 4}" fill="${color}" font-size="9" font-family="IBM Plex Mono,monospace">${(r.score ?? 0).toFixed(4)}</text>
+      `;
+    }).join("");
+ 
+    const chartSvg = `
+      <svg width="${W}" height="${chartH}" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:0.5rem 0">
+        <rect width="${W}" height="${chartH}" fill="transparent"/>
+        ${bars}
+      </svg>
+    `;
+ 
+    // Rankings table
+    const rankingTable = buildTable(
+      ["Rank", "Model", isRegression ? "RMSE" : "Score", "Std ±", "Time"],
+      arena.ranking.map((r: any, i: number) => [
+        i === 0
+          ? `<span style="color:#00ff88;font-weight:600">#1</span>`
+          : `<span style="color:#4d6478">#${r.rank}</span>`,
+        `<span style="color:${i === 0 ? "#00d4ff" : "#8fa8c0"}">${r.model}</span>`,
+        `<span style="color:${i === 0 ? "#00d4ff" : "inherit"}">${fmt(r.score, 4)}</span>`,
+        r.std != null ? `±${fmt(r.std, 4)}` : "—",
+        r.time_s != null ? `${r.time_s}s` : "—",
+      ])
+    );
+ 
+    // Model errors
+    const errorAlerts = (arena.models ?? [])
+      .filter((m: any) => m.error)
+      .map((m: any) => alertBox(`${m.model}: ${m.error}`, "warning"))
+      .join("");
+ 
+    arenaHtml = section("MODEL ARENA", `
+      <div style="display:flex;align-items:center;gap:1rem;background:#0d1117;border:1px solid #1e3a2a;border-radius:4px;padding:0.75rem 1rem;margin-bottom:1rem">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:0.6rem;color:#4d6478;letter-spacing:0.1em">WINNER</div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:1rem;color:#00d4ff;font-weight:600">${arena.winner}</div>
+        ${badge(arena.metric?.toUpperCase() ?? "", "#00d4ff")}
+        <div style="flex:1"></div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:0.75rem;color:#00d4ff">${fmt(arena.ranking[0]?.score, 4)}</div>
+      </div>
+ 
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:0.6rem;color:#4d6478;letter-spacing:0.1em;margin-bottom:0.4rem">${metricLabel}</div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:0.6rem;color:#4d6478;margin-bottom:0.5rem">
+        ${arena.n_samples?.toLocaleString()} samples · ${arena.n_features} features · ${arena.n_folds}-fold CV
+      </div>
+ 
+      ${chartSvg}
+      ${rankingTable}
+      ${errorAlerts}
+    `);
+  }
+
+
   // ── CSS ───────────────────────────────────────────────────────────
   const css = `
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
@@ -723,6 +944,8 @@ export function generateReport(result: AnalysisResult, filename: string): void {
   ${outliersHtml}
   ${redundancyHtml}
   ${mlHtml}
+  ${arenaHtml}
+  ${tsHtml}
   ${nlpHtml}
 </body>
 </html>`;

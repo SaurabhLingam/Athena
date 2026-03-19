@@ -4,7 +4,7 @@ import { analyzeDataset } from "./lib/api";
 import UploadPage from "./components/UploadPage";
 import ReportPage from "./components/ReportPage";
 import ComparePage from "./components/ComparePage";
-import Landing from "./components/Landing"; 
+import Landing from "./components/Landing";
 import "./index.css";
 
 export default function App() {
@@ -18,13 +18,15 @@ export default function App() {
     file: File,
     mode: DataMode,
     targetCol: string | null,
-    profile: Profile
+    profile: Profile,
+    datetimeCol: string | null = null,
+    tsTargetCol: string | null = null,
   ) => {
     setLoading(true);
     setError(null);
     setFilename(file.name);
     try {
-      const r = await analyzeDataset(file, mode, targetCol, profile);
+      const r = await analyzeDataset(file, mode, targetCol, profile, datetimeCol, tsTargetCol);
       setResult(r);
       setView("report");
     } catch (e: any) {
@@ -41,13 +43,14 @@ export default function App() {
         @keyframes fadeIn {
           from { opacity: 0; transform: translateY(8px); }
           to { opacity: 1; transform: translateY(0); }
-          }
-          @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
-          `}</style>
+        }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+      `}</style>
 
       {view === "landing" && (
         <Landing onLaunch={() => setView("upload")} />
       )}
+
       {view === "upload" && (
         <>
           {error && (
@@ -74,7 +77,7 @@ export default function App() {
             onCompare={() => setView("compare")}
             onHome={() => setView("landing")}
             loading={loading}
-            />
+          />
         </>
       )}
 

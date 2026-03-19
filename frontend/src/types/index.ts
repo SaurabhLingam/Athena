@@ -6,6 +6,102 @@ export interface AnalysisResult {
   mode: DataMode;
   eda: EDAResult;
   ml_diagnostics: MLDiagnostics;
+  timeseries?: TimeSeriesResult;
+  model_arena?: ModelArenaResult;
+}
+
+export interface TimeSeriesResult {
+  detected: boolean;
+  reason?: string;
+  datetime_col?: string;
+  target_col?: string;
+  n_observations?: number;
+  freq?: string;
+  eda?: TimeSeriesEDA;
+  baselines?: TimeSeriesBaselines;
+}
+
+export interface TimeSeriesEDA {
+  summary: {
+    mean: number;
+    std: number;
+    min: number;
+    max: number;
+    median: number;
+    missing_pct: number;
+  };
+  stationarity: {
+    adf: StationarityTest | null;
+    kpss: StationarityTest | null;
+    verdict: "stationary" | "non_stationary" | "inconclusive" | "unknown";
+    needs_differencing: boolean;
+  };
+  decomposition: {
+    period: number;
+    trend: (number | null)[];
+    seasonal: (number | null)[];
+    residual: (number | null)[];
+    dates: string[];
+    error?: string;
+  };
+  acf_pacf: {
+    acf: number[];
+    pacf: number[];
+    confidence: number;
+    lags: number[];
+    error?: string;
+  };
+  missing_timestamps: {
+    gap_count: number;
+    total_expected: number;
+    coverage_pct: number;
+    gaps: string[];
+    error?: string;
+  };
+  rolling_stats: {
+    window: number;
+    mean: (number | null)[];
+    std: (number | null)[];
+    dates: string[];
+    values: number[];
+    error?: string;
+  };
+}
+
+export interface StationarityTest {
+  statistic: number;
+  p_value: number;
+  is_stationary: boolean;
+  critical_values: Record<string, number>;
+  interpretation: string;
+  error?: string;
+}
+
+export interface TimeSeriesBaseline {
+  rmse?: number;
+  mae?: number;
+  mape?: number;
+  model?: string;
+  forecast?: number[];
+  order?: number[];
+  window?: number;
+  error?: string;
+}
+
+export interface TimeSeriesBaselines {
+  naive?: TimeSeriesBaseline;
+  moving_average?: TimeSeriesBaseline;
+  exp_smoothing?: TimeSeriesBaseline;
+  arima?: TimeSeriesBaseline;
+  ranking?: { model: string; rmse: number; mae: number; mape: number }[];
+  error?: string;
+}
+
+export interface TSDetectionResult {
+  datetime_candidates: string[];
+  target_candidates: string[];
+  auto_datetime: string | null;
+  auto_target: string | null;
 }
 
 export interface EDAResult {
@@ -22,7 +118,7 @@ export interface EDAResult {
   feature_correlation?: FeatureCorrelation;
   target_insights?: TargetInsights;
   bivariate?: BivariateResult;
-  nlp?: NLPResult
+  nlp?: NLPResult;
 }
 
 export interface BasicInfo {
@@ -246,4 +342,35 @@ export interface NLPColumnResult {
 export interface NLPResult {
   nlp_analysis: NLPColumnResult[];
   text_col_count: number;
+}
+
+export interface ModelArenaResult {
+  status: string;
+  reason?: string;
+  task_type?: string;
+  metric?: string;
+  n_folds?: number;
+  n_features?: number;
+  n_samples?: number;
+  winner?: string;
+  models?: ModelArenaModel[];
+  ranking?: ModelArenaRanking[];
+}
+ 
+export interface ModelArenaModel {
+  model: string;
+  score: number | null;
+  rmse: number | null;
+  std: number | null;
+  time_s: number | null;
+  error: string | null;
+}
+ 
+export interface ModelArenaRanking {
+  rank: number;
+  model: string;
+  score: number | null;
+  rmse: number | null;
+  std: number | null;
+  time_s: number | null;
 }

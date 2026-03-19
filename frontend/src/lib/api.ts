@@ -1,4 +1,4 @@
-import { AnalysisResult, DriftResult } from "../types";
+import { AnalysisResult, DriftResult, TSDetectionResult } from "../types";
 
 const BASE = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
 
@@ -6,10 +6,14 @@ export async function analyzeDataset(
   file: File,
   dataType: "labeled" | "unlabeled",
   targetCol: string | null,
-  profile: string
+  profile: string,
+  datetimeCol: string | null = null,
+  tsTargetCol: string | null = null,
 ): Promise<AnalysisResult> {
   const params = new URLSearchParams({ data_type: dataType, profile });
   if (targetCol) params.set("target_col", targetCol);
+  if (datetimeCol) params.set("datetime_col", datetimeCol);
+  if (tsTargetCol) params.set("ts_target_col", tsTargetCol);
 
   const form = new FormData();
   form.append("file", file);
@@ -24,6 +28,19 @@ export async function analyzeDataset(
     throw new Error(err.detail ?? "Analysis failed");
   }
 
+  return res.json();
+}
+
+export async function detectTimeseries(file: File): Promise<TSDetectionResult> {
+  const form = new FormData();
+  form.append("file", file);
+
+  const res = await fetch(`${BASE}/timeseries/detect`, {
+    method: "POST",
+    body: form,
+  });
+
+  if (!res.ok) throw new Error("Time series detection failed");
   return res.json();
 }
 
@@ -48,7 +65,7 @@ export async function compareDatasets(
   return res.json();
 }
 
-export async function downloadScript(eda: object, filename = "preprocessing.py") {
+export async function downloadScript(eda: object, timeseries?: object, filename = "preprocessing.py") {
   const res = await fetch(`${BASE}/script`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

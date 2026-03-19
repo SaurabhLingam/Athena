@@ -2,23 +2,37 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 from fastapi.responses import Response
-from eda import EdaToolKit
 from dotenv import load_dotenv
 import os
 from pathlib import Path
 import math
-from profiles import get_profile
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from starlette.requests import Request
+
+try:
+    from backend.eda import EdaToolKit
+    from backend.profiles import get_profile
+    from backend.ml import MLdiagnosticskit
+    from backend.timeseries import TimeSeriesKit
+    from backend.model_arena import ModelArenaKit
+except ImportError:
+    from eda import EdaToolKit
+    from profiles import get_profile
+    from ml import MLdiagnosticskit
+    from timeseries import TimeSeriesKit
+    from model_arena import ModelArenaKit
+
+
+
 
 limiter = Limiter(key_func=get_remote_address)
 
 
 
 
-MAX_FILE_SIZE = 50 * 1024 * 1024  
+MAX_FILE_SIZE = 1024 * 1024 * 1024  
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -35,7 +49,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 env_path = Path(__file__).resolve().parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
-from ml import MLdiagnosticskit
+
 
 
 def sanitize_for_json(obj):
@@ -70,7 +84,7 @@ def read_csv_sample(upload_file, sample_rows=200_000):
 
 @app.post("/analyze")
 @limiter.limit("5/minute")
-def analyze_csv(request: Request, file: UploadFile = File(...), data_type: str = "unlabeled", target_col: str = None, profile: str = "standard"):
+def analyze_csv(request: Request, file: UploadFile = File(...), data_type: str = "unlabeled", target_col: str = None, profile: str = "standard", datetime_col: str = None, ts_target_col: str = None):
     if file.size > MAX_FILE_SIZE:
         raise HTTPException(400, "File too large")
     if not file.filename.endswith(".csv"):
@@ -78,6 +92,8 @@ def analyze_csv(request: Request, file: UploadFile = File(...), data_type: str =
     cfg = get_profile(profile)
     eda = EdaToolKit(cfg=cfg)
     ml_kit = MLdiagnosticskit(cfg=cfg)
+    ts_kit = TimeSeriesKit(cfg=cfg)
+    arena_kit = ModelArenaKit(cfg=cfg)
 
     if data_type not in {"unlabeled", "labeled"}:
         raise HTTPException(400, detail="data_type must be unlabeled, labeled")
@@ -108,6 +124,12 @@ def analyze_csv(request: Request, file: UploadFile = File(...), data_type: str =
         "free_text": free_text_result,
         "nlp": nlp_result,
     }
+    ts_result = safe_run(
+        ts_kit.run_timeseries,
+        df,
+        datetime_col=datetime_col,
+        target_col=ts_target_col or target_col,
+    )
 
     if data_type == "unlabeled":
         routing_report = ml_kit.run_diagnostics(df=df, col_views=column_views, mode="unlabeled")
@@ -116,7 +138,7 @@ def analyze_csv(request: Request, file: UploadFile = File(...), data_type: str =
         if routing_report.get("status") == "ready_for_unlabeled_pipeline":
             ml_report = safe_run(ml_kit.unlabeled_diagnostics, df=df, col_views=column_views)
         
-        result = {"mode": "unlabeled", "eda": base_eda, "ml_diagnostics": ml_report}
+        result = {"mode": "unlabeled", "eda": base_eda, "ml_diagnostics": ml_report, "timeseries": ts_result, "model_arena": {"status": "skipped", "reason": "Only runs on labeled datasets."}}
 
     elif data_type == "labeled":
         if not target_col:
@@ -136,6 +158,18 @@ def analyze_csv(request: Request, file: UploadFile = File(...), data_type: str =
                 feature_correlation=feature_correlation,
                 target_col=target_col
             )
+            arena_result = {"status": "skipped", "reason": "Only runs on labeled datasets."}
+            if data_type == "labeled" and target_col:
+                task_type = ml_report.get("task_type") if isinstance(ml_report, dict) else None
+                if task_type in ("classification", "regression"):
+                    arena_result = safe_run(
+                        arena_kit.run_arena,
+                        df=df,
+                        col_views=column_views,
+                        target_col=target_col,
+                        task_type=task_type,
+                    )
+
 
         result = {
             "mode": "labeled",
@@ -145,7 +179,9 @@ def analyze_csv(request: Request, file: UploadFile = File(...), data_type: str =
                 "target_insights": target_insights,
                 "bivariate": safe_run(eda.bivariate_analysis, df, target_col),
             },
-            "ml_diagnostics": ml_report
+            "ml_diagnostics": ml_report,
+            "timeseries": ts_result,        
+            "model_arena": arena_result
         }
     else:
         raise HTTPException(400, detail="invalid data type")
@@ -166,7 +202,10 @@ def compare_datasets(request: Request, train_file: UploadFile = File(...), test_
     if train_df.empty or test_df.empty:
         raise HTTPException(status_code=400, detail="One or both files are empty")
 
-    from drift import DriftAnalyzer
+    try:
+        from backend.drift import DriftAnalyzer
+    except ImportError:
+        from drift import DriftAnalyzer
     analyzer = DriftAnalyzer()
     result = analyzer.compare(train_df, test_df)
 
@@ -175,20 +214,35 @@ def compare_datasets(request: Request, train_file: UploadFile = File(...), test_
 @app.post("/script")
 def generate_script(payload: dict):
     eda = payload.get("eda", {})
+    timeseries = payload.get("timeseries", {})
     free_text = eda.get("free_text", {})
     has_text_cols = len(free_text.get("free_text_columns", [])) > 0
-
-    if has_text_cols:
-        from codegen import generate_nlp_script
+    has_timeseries = timeseries.get("detected", False)
+ 
+    try:
+        from backend.codegen import generate_nlp_script, generate_preprocessing_script, generate_timeseries_script
+    except ImportError:
+        from codegen import generate_nlp_script, generate_preprocessing_script, generate_timeseries_script
+ 
+    if has_timeseries:
+        script = generate_timeseries_script(eda, timeseries)
+        filename = "timeseries_pipeline.py"
+    elif has_text_cols:
         script = generate_nlp_script(eda)
         filename = "nlp_preprocessing.py"
     else:
-        from codegen import generate_preprocessing_script
         script = generate_preprocessing_script(eda)
         filename = "preprocessing.py"
-
+ 
     return Response(
         content=script,
         media_type="text/plain",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+@app.post("/timeseries/detect")
+def detect_timeseries(file: UploadFile = File(...)):
+    df     = read_csv_sample(file)
+    ts_kit = TimeSeriesKit()
+    result = ts_kit.get_candidates(df)
+    return sanitize_for_json(result)
