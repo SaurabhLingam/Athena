@@ -16,17 +16,13 @@ warnings.filterwarnings("ignore")
 
 
 class ModelArenaKit:
-    """
-    Runs a multi-model comparison on a labeled dataset.
-    Trains several models with sensible defaults, scores them,
-    and returns a ranked comparison table.
 
-    Matches the style of MLdiagnosticskit — same preprocessing,
-    same safe_float pattern, same dict return structure.
-    """
 
     def __init__(self, cfg: dict = None):
-        from backend.profiles import get_profile
+        try:
+            from backend.profiles import get_profile
+        except ImportError:
+            from profiles import get_profile
         self.cfg = cfg or get_profile("standard")
 
     @staticmethod

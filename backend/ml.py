@@ -25,7 +25,10 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 class MLdiagnosticskit:
     def __init__(self, cfg: dict = None):
-        from backend.profiles import get_profile
+        try:
+            from backend.profiles import get_profile
+        except ImportError:
+            from profiles import get_profile
         self.cfg = cfg or get_profile("standard")
         self.penalties = []
         self.recommendations = []

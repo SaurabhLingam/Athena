@@ -9,7 +9,10 @@ class TimeSeriesKit:
 
     def __init__(self, cfg: dict = None):
         try:
-            from backend.profiles import get_profile
+            try:
+                from backend.profiles import get_profile
+            except ImportError:
+                from profiles import get_profile
         except ImportError:
             from profiles import get_profile
         self.cfg = cfg or get_profile("standard")

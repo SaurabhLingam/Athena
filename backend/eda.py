@@ -3,7 +3,10 @@ import pandas as pd
 import numpy as np
 class EdaToolKit:
     def __init__(self, cfg: dict = None):
-        from backend.profiles import get_profile
+        try:
+            from backend.profiles import get_profile
+        except ImportError:
+            from profiles import get_profile
         self.cfg = cfg or get_profile("standard")
     def basicdatainfo(self, df: pd.DataFrame ):
         rows = df.shape[0]
