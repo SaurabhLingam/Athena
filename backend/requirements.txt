@@ -12,3 +12,5 @@ nltk
 rich
 typer
 starlette
+statsmodels
+pmdarima
