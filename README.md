@@ -101,12 +101,6 @@ athena update    # update to latest version
 
 ---
 
-## Web version
-
-A hosted version is available at [athena-alpha-hazel.vercel.app](https://athena-alpha-hazel.vercel.app) — note this runs on a server with memory limits so large datasets may fail. The local package has no such restriction.
-
----
-
 ## Stack
 
 **Frontend** — React, TypeScript, Vite, Recharts
