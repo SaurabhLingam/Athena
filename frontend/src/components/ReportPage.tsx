@@ -341,7 +341,7 @@ export default function ReportPage({ result, filename, onBack }: ReportPageProps
         <Badge variant={result.mode === "labeled" ? "accent" : "neutral"}>{result.mode.toUpperCase()}</Badge>
         {ts?.detected && <Badge variant="accent">TIME SERIES</Badge>}
         <button
-          onClick={() => downloadScript(eda, result.timeseries, `${filename}_preprocessing.py`)}
+          onClick={() => downloadScript(eda, result.timeseries, filename)}
           style={{ padding: "0.35rem 0.75rem", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "transparent", color: "var(--text-1)", fontFamily: "var(--font-mono)", fontSize: "0.65rem", letterSpacing: "0.08em", cursor: "pointer", transition: "all var(--transition)" }}
           onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--green-dim)"; e.currentTarget.style.color = "var(--green)"; }}
           onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text-1)"; }}

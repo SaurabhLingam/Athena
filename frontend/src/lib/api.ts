@@ -65,14 +65,19 @@ export async function compareDatasets(
   return res.json();
 }
 
-export async function downloadScript(eda: object, timeseries?: object, filename = "preprocessing.py") {
+export async function downloadScript(eda: object, timeseries?: object, datasetName?: string) {
   const res = await fetch(`${BASE}/script`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ eda }),
+    body: JSON.stringify({ eda, timeseries }),
   });
 
   if (!res.ok) throw new Error("Script generation failed");
+
+  // The backend picks the script type (preprocessing / nlp / timeseries) and names it
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const serverName = disposition.match(/filename="?([^";]+)"?/)?.[1] ?? "preprocessing.py";
+  const filename = datasetName ? `${datasetName.replace(/\.csv$/i, "")}_${serverName}` : serverName;
 
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);

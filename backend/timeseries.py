@@ -52,8 +52,11 @@ class TimeSeriesKit:
                 continue
             if df[col].dtype == object:
                 sample = df[col].dropna().head(50)
+                # Dates contain digits; skip plain text like "yes"/"no" without trying to parse it
+                if sample.empty or sample.astype(str).str.contains(r"\d").mean() <= 0.8:
+                    continue
                 try:
-                    parsed = pd.to_datetime(sample, infer_datetime_format=True)
+                    parsed = pd.to_datetime(sample, format="mixed")
                     if parsed.notna().mean() > 0.8:
                         candidates.append(col)
                 except Exception:
@@ -82,7 +85,7 @@ class TimeSeriesKit:
 
     def prepare_series(self, df: pd.DataFrame, dt_col: str, tgt_col: str) -> pd.Series:
         tmp = df[[dt_col, tgt_col]].copy()
-        tmp[dt_col] = pd.to_datetime(tmp[dt_col], infer_datetime_format=True)
+        tmp[dt_col] = pd.to_datetime(tmp[dt_col], format="mixed")
         tmp = tmp.dropna(subset=[dt_col])
         tmp = tmp.sort_values(dt_col).set_index(dt_col)
         series = tmp[tgt_col].dropna()

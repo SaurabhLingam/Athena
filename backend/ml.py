@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, Optional
 
-from sklearn.model_selection import KFold, StratifiedKFold
+from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
 from sklearn.metrics import balanced_accuracy_score, r2_score
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
@@ -22,6 +22,71 @@ import warnings
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
+SEED = 42
+
+
+def lgb_params(task_type: str, n_classes: int = 2) -> dict:
+    if task_type == "classification":
+        if n_classes == 2:
+            params = {"objective": "binary", "metric": "binary_logloss"}
+        else:
+            params = {"objective": "multiclass", "num_class": n_classes, "metric": "multi_logloss"}
+    else:
+        params = {"objective": "regression", "metric": "l2"}
+    params.update({
+        "verbosity": -1,
+        "boosting_type": "gbdt",
+        "num_leaves": 31,
+        "learning_rate": 0.1,
+        "num_threads": 1,
+        "seed": SEED,
+    })
+    return params
+
+
+def fit_lgb_early_stopped(X_train, y_train, params: dict, task_type: str, seed: int = SEED,
+                          es_fraction: float = 0.15):
+    """
+    Train LightGBM with early stopping on a holdout carved out of the training
+    data, so the caller's validation fold stays untouched for scoring.
+    Returns (model, evals_result) with curves under "train" and "es".
+    """
+    stratify = y_train if task_type == "classification" else None
+    try:
+        X_fit, X_es, y_fit, y_es = train_test_split(
+            X_train, y_train, test_size=es_fraction, random_state=seed, stratify=stratify
+        )
+    except ValueError:
+        # Too few samples per class to stratify the holdout
+        X_fit, X_es, y_fit, y_es = train_test_split(
+            X_train, y_train, test_size=es_fraction, random_state=seed
+        )
+
+    evals_result = {}
+    fit_data = lgb.Dataset(X_fit, y_fit)
+    es_data = lgb.Dataset(X_es, y_es, reference=fit_data)
+    model = lgb.train(
+        params,
+        fit_data,
+        num_boost_round=200,
+        valid_sets=[fit_data, es_data],
+        valid_names=["train", "es"],
+        callbacks=[
+            lgb.record_evaluation(evals_result),
+            lgb.early_stopping(15, verbose=False),
+        ],
+    )
+    return model, evals_result
+
+
+def predict_labels(model, X, task_type: str):
+    y_pred = model.predict(X, num_iteration=model.best_iteration)
+    if task_type == "classification":
+        if y_pred.ndim == 1:
+            return (y_pred > 0.5).astype(int)
+        return np.argmax(y_pred, axis=1)
+    return y_pred
+
 
 class MLdiagnosticskit:
     def __init__(self, cfg: dict = None):
@@ -30,8 +95,6 @@ class MLdiagnosticskit:
         except ImportError:
             from profiles import get_profile
         self.cfg = cfg or get_profile("standard")
-        self.penalties = []
-        self.recommendations = []
         self.component_scores = {
             "data_health": 100,
             "trainability": 100,
@@ -106,8 +169,6 @@ class MLdiagnosticskit:
         self.penalty_buckets = {}
         self.recommendation_buckets = {}
 
-        self.penalties = []
-        self.recommendations = []
         self.component_scores = {
             "data_health": 100,
             "trainability": 100,
@@ -227,6 +288,25 @@ class MLdiagnosticskit:
 
         leakage_report = self.run_leakage_checks(df, feature_correlation, col_views, target_col)
 
+        n_missing_target = int(df[target_col].isna().sum())
+        if n_missing_target:
+            df = df[df[target_col].notna()]
+            self.add_recommendation(
+                "Labeled Diagnostics",
+                f"Dropped {n_missing_target} rows ({n_missing_target / (n_missing_target + len(df)):.1%}) with missing target before training"
+            )
+            if len(df) < 10:
+                self.component_scores["trainability"] = 0
+                self.add_penalty("Labeled Diagnostics", "Too few rows with a target value to train a baseline")
+                return {
+                    "status": "failed",
+                    "stage": "trainability",
+                    "issue": "Too few labeled rows",
+                    "penalties": self.penalty_buckets,
+                    "recommendations": self.recommendation_buckets,
+                    "component_scores": self.component_scores
+                }
+
         if leakage_report["leakage_score"] > 90:
 
 
@@ -234,8 +314,8 @@ class MLdiagnosticskit:
                 "status": "failed",
                 "stage": "leakage",
                 "leakage": leakage_report,
-                "penalties": self.penalties,
-                "recommendations": self.recommendations,
+                "penalties": self.penalty_buckets,
+                "recommendations": self.recommendation_buckets,
                 "component_scores": self.component_scores
             }
 
@@ -315,14 +395,18 @@ class MLdiagnosticskit:
             dup_frac = df.drop(columns=[target_col]).duplicated().mean()
             if dup_frac > 0.20:
                 leakage_score += 25
+                self.add_penalty(
+                    "Leakage Checks",
+                    f"{dup_frac:.1%} duplicate feature rows detected, high risk of train/test leakage. Deduplicate before splitting"
+                )
             elif dup_frac > 0.10:
                 leakage_score += 10
                 self.add_penalty(
                     "Leakage Checks",
                     f"{dup_frac:.1%} duplicate feature rows detected, possible train/test leakage"
                 )
-        except:
-            pass
+        except Exception as e:
+            self.add_recommendation("Leakage Checks", f"Duplicate-row check could not run: {e}")
         
 
         final_score = min(100, leakage_score)
@@ -363,32 +447,19 @@ class MLdiagnosticskit:
             label_map = {v: i for i, v in enumerate(unique_labels)}
             y = y_raw.map(label_map).values
 
-            num_classes = len(unique_labels)
+            params = lgb_params(task_type, len(unique_labels))
             metric_fn = balanced_accuracy_score
             metric_name = "balanced_accuracy"
 
-            if num_classes == 2:
-                params = {"objective": "binary", "metric": "binary_logloss"}
-            else:
-                params = {"objective": "multiclass", "num_class": num_classes, "metric": "multi_logloss"}
-
-            kf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+            kf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=SEED)
 
         else:
             y = y_raw.values
             metric_fn = r2_score
             metric_name = "r2"
 
-            params = {"objective": "regression", "metric": "l2"}
-            kf = KFold(n_splits=n_folds, shuffle=True, random_state=42)
-
-        params.update({
-            "verbosity": -1,
-            "boosting_type": "gbdt",
-            "num_leaves": 31,
-            "learning_rate": 0.1,
-            "num_threads": 1
-        })
+            params = lgb_params(task_type)
+            kf = KFold(n_splits=n_folds, shuffle=True, random_state=SEED)
 
         fold_scores = []
         fold_curves = []
@@ -398,7 +469,7 @@ class MLdiagnosticskit:
         train_val_gaps = []
         improvements = []
 
-        for train_idx, val_idx in kf.split(X, y if task_type == "classification" else None):
+        for fold_i, (train_idx, val_idx) in enumerate(kf.split(X, y if task_type == "classification" else None)):
 
             X_train, X_val = X.iloc[train_idx].copy(), X.iloc[val_idx].copy()
             y_train, y_val = y[train_idx], y[val_idx]
@@ -418,27 +489,15 @@ class MLdiagnosticskit:
                 mapping = {u: i for i, u in enumerate(uniques)}
                 X_val[c] = X_val[c].map(mapping).fillna(-1)
 
-            evals_result = {}
-
-            train_data = lgb.Dataset(X_train, y_train)
-            val_data = lgb.Dataset(X_val, y_val, reference=train_data)
-
-            model = lgb.train(
-                params,
-                train_data,
-                num_boost_round=200,
-                valid_sets=[train_data, val_data],
-                valid_names=["train", "val"],
-                callbacks=[
-                    lgb.record_evaluation(evals_result),
-                    lgb.early_stopping(15)
-                ]
+            model, evals_result = fit_lgb_early_stopped(
+                X_train, y_train, params, task_type, seed=SEED + fold_i
             )
 
             best_iters.append(model.best_iteration)
 
+            # Curves come from the early-stopping holdout; X_val is only used for the score
             train_curve = evals_result["train"][params["metric"]]
-            val_curve = evals_result["val"][params["metric"]]
+            val_curve = evals_result["es"][params["metric"]]
 
             best_i = model.best_iteration - 1
 
@@ -452,13 +511,7 @@ class MLdiagnosticskit:
             improvement = float(initial_val - min(val_curve))
             improvements.append(improvement)
 
-            y_pred = model.predict(X_val)
-
-            if task_type == "classification":
-                if y_pred.ndim == 1:
-                    y_pred = (y_pred > 0.5).astype(int)
-                else:
-                    y_pred = np.argmax(y_pred, axis=1)
+            y_pred = predict_labels(model, X_val, task_type)
 
             score = float(metric_fn(y_val, y_pred))
             fold_curves.append({
@@ -524,7 +577,6 @@ class MLdiagnosticskit:
         n_runs: int = 5,
         sample_frac: float = 0.8
     ):
-        from sklearn.model_selection import train_test_split
         feature_cols = col_views.get("numeric_features", []) + col_views.get("categorical_features", [])
         feature_cols = [c for c in feature_cols if c != target_col]
 
@@ -540,10 +592,12 @@ class MLdiagnosticskit:
         scores = []
         best_iters = []
         final_losses = []
+        rng = np.random.default_rng(SEED)
 
-        for _ in range(n_runs):
+        for run_i in range(n_runs):
+            run_seed = SEED + run_i
 
-            sample_idx = np.random.choice(len(df), int(len(df) * sample_frac), replace=False)
+            sample_idx = rng.choice(len(df), int(len(df) * sample_frac), replace=False)
             X = X_full.iloc[sample_idx].copy()
             y_raw = y_full.iloc[sample_idx].copy()
 
@@ -552,27 +606,13 @@ class MLdiagnosticskit:
                 label_map = {v: i for i, v in enumerate(unique_labels)}
                 y = y_raw.map(label_map).values
 
-                num_classes = len(unique_labels)
-
-                if num_classes == 2:
-                    params = {"objective": "binary", "metric": "binary_logloss"}
-                else:
-                    params = {"objective": "multiclass", "num_class": num_classes, "metric": "multi_logloss"}
-
+                params = lgb_params(task_type, len(unique_labels))
                 metric_fn = balanced_accuracy_score
 
             else:
                 y = y_raw.values
-                params = {"objective": "regression", "metric": "l2"}
+                params = lgb_params(task_type)
                 metric_fn = r2_score
-
-            params.update({
-                "verbosity": -1,
-                "boosting_type": "gbdt",
-                "num_leaves": 31,
-                "learning_rate": 0.1,
-                "num_threads": 1
-            })
 
             for c in X.select_dtypes(include="number").columns:
                 X[c] = X[c].fillna(X[c].median())
@@ -580,49 +620,27 @@ class MLdiagnosticskit:
             for c in X.select_dtypes(exclude="number").columns:
                 X[c] = pd.factorize(X[c].fillna("NA").astype(str))[0]
 
-            if task_type == "classification":
-                try:
-                    X_train, X_val, y_train, y_val = train_test_split(
-                        X, y, test_size=0.2, random_state=None, stratify=y
-                    )
-                except ValueError:
-                    # Fallback if any class has only 1 sample
-                    split = int(0.8 * len(X))
-                    X_train, X_val = X.iloc[:split], X.iloc[split:]
-                    y_train, y_val = y[:split], y[split:]
-            else:
-                split = int(0.8 * len(X))
-                X_train, X_val = X.iloc[:split], X.iloc[split:]
-                y_train, y_val = y[:split], y[split:]
-            evals_result = {}
+            stratify = y if task_type == "classification" else None
+            try:
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X, y, test_size=0.2, random_state=run_seed, stratify=stratify
+                )
+            except ValueError:
+                # Fallback if any class has only 1 sample
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X, y, test_size=0.2, random_state=run_seed
+                )
 
-            train_data = lgb.Dataset(X_train, y_train)
-            val_data = lgb.Dataset(X_val, y_val, reference=train_data)
-
-            model = lgb.train(
-                params,
-                train_data,
-                num_boost_round=200,
-                valid_sets=[val_data],
-                valid_names=["val"],
-                callbacks=[
-                    lgb.record_evaluation(evals_result),
-                    lgb.early_stopping(15)
-                ]
+            model, evals_result = fit_lgb_early_stopped(
+                X_train, y_train, params, task_type, seed=run_seed
             )
 
             best_iters.append(model.best_iteration)
 
-            val_curve = evals_result["val"][params["metric"]]
-            final_losses.append(float(min(val_curve)))
+            es_curve = evals_result["es"][params["metric"]]
+            final_losses.append(float(min(es_curve)))
 
-            y_pred = model.predict(X_val)
-
-            if task_type == "classification":
-                if y_pred.ndim == 1:
-                    y_pred = (y_pred > 0.5).astype(int)
-                else:
-                    y_pred = np.argmax(y_pred, axis=1)
+            y_pred = predict_labels(model, X_val, task_type)
 
             score = float(metric_fn(y_val, y_pred))
             scores.append(score)
@@ -707,7 +725,7 @@ class MLdiagnosticskit:
         n_cols = len(usable_cols)
         if df.shape[0] * n_cols > MAX_CELLS:
             max_rows = max(500, MAX_CELLS // n_cols)
-            X = df[usable_cols].sample(n=max_rows, random_state=42).copy()
+            X = df[usable_cols].sample(n=max_rows, random_state=SEED).copy()
         else:
             X = df[usable_cols].copy()
 
@@ -762,8 +780,7 @@ class MLdiagnosticskit:
         iso = IsolationForest(
             n_estimators=50,
             contamination="auto",
-            random_state=42,
-
+            random_state=SEED,
         )
 
         preds = iso.fit_predict(X_scaled)
@@ -806,7 +823,7 @@ class MLdiagnosticskit:
         
         max_points = 5000
         if len(scores) > max_points:
-            idx = np.random.choice(len(scores), max_points, replace=False)
+            idx = np.random.default_rng(SEED).choice(len(scores), max_points, replace=False)
             score_sample = scores[idx].tolist()
         else:
             score_sample = scores.tolist()
@@ -827,7 +844,7 @@ class MLdiagnosticskit:
 
         max_samples = 10000
         if X_scaled.shape[0] > max_samples:
-            idx = np.random.choice(X_scaled.shape[0], max_samples, replace=False)
+            idx = np.random.default_rng(SEED).choice(X_scaled.shape[0], max_samples, replace=False)
             X_metric = X_scaled[idx]
         else:
             X_metric = X_scaled
@@ -835,7 +852,7 @@ class MLdiagnosticskit:
         for k in range(2, 6):
             km = MiniBatchKMeans(
                 n_clusters=k,
-                random_state=42,
+                random_state=SEED,
                 n_init=3,
                 batch_size=1024
             )
@@ -888,20 +905,21 @@ class MLdiagnosticskit:
     def run_unlabeled_stability(self, X_scaled, n_runs=3, sample_frac=0.8):
         sil_scores = []
         max_stability_samples = 5000
+        rng = np.random.default_rng(SEED)
 
-        for _ in range(n_runs):
+        for run_i in range(n_runs):
             sample_size = int(len(X_scaled) * sample_frac)
-            idx = np.random.choice(len(X_scaled), min(sample_size, 20000), replace=False)
+            idx = rng.choice(len(X_scaled), min(sample_size, 20000), replace=False)
             X_sub = X_scaled[idx]
 
-            metric_idx = np.random.choice(
+            metric_idx = rng.choice(
                 len(X_sub),
                 min(len(X_sub), max_stability_samples),
                 replace=False
             )
             X_metric = X_sub[metric_idx]
 
-            km = MiniBatchKMeans(n_clusters=3, random_state=None, n_init=3)
+            km = MiniBatchKMeans(n_clusters=3, random_state=SEED + run_i, n_init=3)
             km.fit(X_sub)
 
             labels_metric = km.predict(X_metric)

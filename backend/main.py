@@ -32,7 +32,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 
-MAX_FILE_SIZE = 1024 * 1024 * 1024  
+MAX_FILE_SIZE = 100 * 1024 * 1024
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -40,6 +40,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 
@@ -70,6 +71,16 @@ def safe_run(func, *args, **kwargs):
     except Exception as e:
         return {"status": "error", "error_msg": str(e)}
 
+def check_upload(upload_file):
+    if not upload_file.filename or not upload_file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are supported")
+    # Measure the received file itself; the client-declared size can be missing.
+    upload_file.file.seek(0, os.SEEK_END)
+    size = upload_file.file.tell()
+    upload_file.file.seek(0)
+    if size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail=f"File too large (max {MAX_FILE_SIZE // (1024 * 1024)} MB)")
+
 def read_csv_sample(upload_file, sample_rows=200_000):
     upload_file.file.seek(0)
     try:
@@ -85,10 +96,7 @@ def read_csv_sample(upload_file, sample_rows=200_000):
 @app.post("/analyze")
 @limiter.limit("5/minute")
 def analyze_csv(request: Request, file: UploadFile = File(...), data_type: str = "unlabeled", target_col: str = None, profile: str = "standard", datetime_col: str = None, ts_target_col: str = None):
-    if file.size > MAX_FILE_SIZE:
-        raise HTTPException(400, "File too large")
-    if not file.filename.endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Only CSV files are supported")
+    check_upload(file)
     cfg = get_profile(profile)
     eda = EdaToolKit(cfg=cfg)
     ml_kit = MLdiagnosticskit(cfg=cfg)
@@ -150,25 +158,25 @@ def analyze_csv(request: Request, file: UploadFile = File(...), data_type: str =
         routing_report = ml_kit.run_diagnostics(df=df, col_views=column_views, mode="labeled", target_col=target_col)
 
         ml_report = routing_report
+        arena_result = {"status": "skipped", "reason": "Dataset did not pass ML diagnostics."}
         if routing_report.get("status") == "ready_for_labeled_pipeline":
-            ml_report = ml_kit.labeled_diagnostics(
+            ml_report = safe_run(
+                ml_kit.labeled_diagnostics,
                 df=df,
                 col_views=column_views,
                 target_insights=target_insights,
                 feature_correlation=feature_correlation,
                 target_col=target_col
             )
-            arena_result = {"status": "skipped", "reason": "Only runs on labeled datasets."}
-            if data_type == "labeled" and target_col:
-                task_type = ml_report.get("task_type") if isinstance(ml_report, dict) else None
-                if task_type in ("classification", "regression"):
-                    arena_result = safe_run(
-                        arena_kit.run_arena,
-                        df=df,
-                        col_views=column_views,
-                        target_col=target_col,
-                        task_type=task_type,
-                    )
+            task_type = ml_report.get("task_type") if isinstance(ml_report, dict) else None
+            if task_type in ("classification", "regression"):
+                arena_result = safe_run(
+                    arena_kit.run_arena,
+                    df=df,
+                    col_views=column_views,
+                    target_col=target_col,
+                    task_type=task_type,
+                )
 
 
         result = {
@@ -191,10 +199,8 @@ def analyze_csv(request: Request, file: UploadFile = File(...), data_type: str =
 @app.post("/compare")
 @limiter.limit("5/minute")
 def compare_datasets(request: Request, train_file: UploadFile = File(...), test_file: UploadFile = File(...)):
-    if train_file.size > MAX_FILE_SIZE or test_file.size > MAX_FILE_SIZE:
-        raise HTTPException(400, "File too large")
-    if not train_file.filename.endswith(".csv") or not test_file.filename.endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Both files must be CSV")
+    check_upload(train_file)
+    check_upload(test_file)
 
     train_df = read_csv_sample(train_file)
     test_df = read_csv_sample(test_file)
@@ -212,7 +218,8 @@ def compare_datasets(request: Request, train_file: UploadFile = File(...), test_
     return sanitize_for_json(result)
 
 @app.post("/script")
-def generate_script(payload: dict):
+@limiter.limit("20/minute")
+def generate_script(request: Request, payload: dict):
     eda = payload.get("eda", {})
     timeseries = payload.get("timeseries", {})
     free_text = eda.get("free_text", {})
@@ -241,7 +248,9 @@ def generate_script(payload: dict):
     )
 
 @app.post("/timeseries/detect")
-def detect_timeseries(file: UploadFile = File(...)):
+@limiter.limit("10/minute")
+def detect_timeseries(request: Request, file: UploadFile = File(...)):
+    check_upload(file)
     df     = read_csv_sample(file)
     ts_kit = TimeSeriesKit()
     result = ts_kit.get_candidates(df)

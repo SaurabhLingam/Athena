@@ -50,3 +50,6 @@ include = ["backend*"]
 
 [tool.setuptools.package-data]
 backend = ["static/**/*", "static/*"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
