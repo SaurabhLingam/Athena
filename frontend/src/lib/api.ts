@@ -1,6 +1,8 @@
 import { AnalysisResult, DriftResult, TSDetectionResult } from "../types";
 
-const BASE = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
+// The packaged UI is served by the same server as the API (`athena run`), so production
+// builds call it on whatever host/port the page was loaded from.
+const BASE = import.meta.env.DEV ? (import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000") : "";
 
 export async function analyzeDataset(
   file: File,

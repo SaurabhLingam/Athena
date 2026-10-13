@@ -141,8 +141,7 @@ def run(
 def _mount_static():
     """
     Attach backend/static/ to the FastAPI app so the bundled React UI
-    is served at localhost. On Railway, static/ doesn't exist so this
-    is silently skipped — Railway is unaffected.
+    is served at localhost. Skipped with a hint if the bundle hasn't been built.
     """
     static_dir = Path(__file__).parent / "static"
     if not static_dir.exists():
@@ -151,7 +150,7 @@ def _mount_static():
                 Text.assemble(
                     ("[yellow]No frontend bundle found[/yellow] at [bold]backend/static/[/bold]\n\n", ""),
                     ("Run this first:\n", "dim"),
-                    ("  bash scripts/build_frontend.sh", "bold white"),
+                    ("  cd frontend && npm install && npm run build", "bold white"),
                 ),
                 border_style="yellow",
                 padding=(1, 2),

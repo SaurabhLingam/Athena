@@ -3,6 +3,11 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    // Bundled into the Python package and served by `athena run`
+    outDir: '../backend/static',
+    emptyOutDir: true,
+  },
   server: {
     port: 3000,
     proxy: {
