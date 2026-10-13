@@ -113,6 +113,8 @@ def test_script_returns_timeseries_pipeline(client):
     r = client.post("/script", json=payload)
     assert r.status_code == 200
     assert "timeseries_pipeline.py" in r.headers["content-disposition"]
+    compile(r.text, "timeseries_pipeline.py", "exec")
+    assert "infer_datetime_format" not in r.text
 
 
 def test_cors_exposes_content_disposition(client):

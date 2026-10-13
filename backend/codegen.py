@@ -279,7 +279,7 @@ def generate_timeseries_script(eda: dict, timeseries: dict) -> str:
         "def load_and_prepare(filepath: str) -> pd.Series:",
         '    """Load CSV and return a clean time series."""',
         "    df = pd.read_csv(filepath)",
-        f"    df['{datetime_col}'] = pd.to_datetime(df['{datetime_col}'], infer_datetime_format=True)",
+        f"    df['{datetime_col}'] = pd.to_datetime(df['{datetime_col}'], format='mixed')",
         f"    df = df.sort_values('{datetime_col}').set_index('{datetime_col}')",
         f"    ts = df['{target_col}'].dropna()",
     ]
