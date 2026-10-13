@@ -327,7 +327,7 @@ def doctor():
     console.print()
 
     checks = [
-        ("Python ≥ 3.9",            _chk_python),
+        ("Python ≥ 3.10",           _chk_python),
         ("fastapi",                 lambda: _chk_import("fastapi")),
         ("uvicorn",                 lambda: _chk_import("uvicorn")),
         ("pandas",                  lambda: _chk_import("pandas")),
@@ -370,7 +370,7 @@ def doctor():
 
 
 def _chk_python():
-    ok = sys.version_info >= (3, 9)
+    ok = sys.version_info >= (3, 10)
     return ok, f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
 def _chk_import(name):

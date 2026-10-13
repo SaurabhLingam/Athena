@@ -1,114 +1,174 @@
 # Athena
 
-**Automated EDA, ML readiness scoring, and data diagnostics — locally in your browser.**
+**Automated EDA, ML readiness scoring, and data diagnostics, running locally in your browser.**
+
+[![PyPI](https://img.shields.io/pypi/v/athena-eda)](https://pypi.org/project/athena-eda/)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 ```bash
 pip install athena-eda
 athena run
 ```
 
----
+Upload a CSV and get a diagnostic report covering data quality, leakage risks, a baseline model, and a model comparison. Then download a Python preprocessing script tailored to your dataset. No code required.
 
-## What it does
-
-Athena analyzes tabular datasets and surfaces everything that matters before you start modeling. Upload a CSV, pick a mode, and get a structured diagnostic report in under two minutes — no code required.
-
-It covers the full pre-modeling workflow: data quality, feature analysis, ML readiness scoring, leakage detection, time series diagnostics, and multi-model comparison. When you're done, download a ready-to-run Python preprocessing script tailored to your dataset.
+**Your data stays on your machine.** Athena runs as a local server on `127.0.0.1`, and nothing is uploaded anywhere.
 
 ---
+
+## Quick start
+
+1. `pip install athena-eda` (Python 3.10+)
+2. `athena run`. Your browser opens at `http://127.0.0.1:8000`.
+3. Upload a CSV and pick a mode:
+   - **Supervised**: you have a target column to predict. Choose it, and Athena treats it as classification or regression.
+   - **Unsupervised**: no target. Athena looks for cluster structure and anomalies instead.
+4. Choose an [analysis profile](#analysis-profiles) and run.
+5. Explore the report, then **↓ SCRIPT.PY** for a preprocessing script or export the full report as HTML.
+
+To check for drift between two datasets, use **Compare** on the upload page and give it a train and a test CSV.
+
+---
+
+## What's in the report
+
+| Tab | What you get |
+|---|---|
+| **Overview** | ML Readiness Score, data structure score, critical alerts, penalties and recommendations |
+| **Features** | Column classification, skewness, numeric and categorical summaries, free-text columns, feature-to-target correlation |
+| **Quality** | Missing values, outliers, redundant feature pairs |
+| **ML Diagnostics** | Supervised: cross-validation scores, leakage risks, stability, learning curves, Model Arena. Unsupervised: clustering and anomaly detection |
+| **Time Series** | Shown when a datetime column is detected: stationarity, decomposition, ACF/PACF, forecasting baselines |
+| **NLP Analysis** | Shown when free-text columns are detected: vocabulary, text quality, vectorization advice |
 
 ## Features
 
 ### Core EDA
-- Column classification — numeric, categorical, identifiers, free text, entity keys
-- Missing value analysis with row-level and column-level breakdown
-- Outlier and skew analysis — per-feature skewness, kurtosis, log-transform recommendations
-- Feature redundancy detection — correlation matrix analysis for highly redundant pairs
+- Column classification: numeric, categorical, identifier, entity key, free text
+- Missing value analysis at row and column level
+- Outlier and skew analysis with log-transform recommendations
+- Redundant feature pairs from the correlation matrix
 
-### ML Readiness
-- **ML Readiness Score** — composite score across data health, trainability, and leakage risk
-- **Leakage Detection** — flags identifier columns and suspiciously correlated features
-- **Baseline Probe** — 3-fold cross-validated LightGBM baseline with learning curves and overfitting detection
-- **Stability Analysis** — subsample stability checks across multiple runs
-- **Clustering Diagnostics** — silhouette scoring across k=2 to 5 for unlabeled datasets
-- **Anomaly Detection** — Isolation Forest with score distribution visualization
+### ML readiness (supervised)
+- **Leakage detection**: features almost perfectly correlated with the target, categories that perfectly separate it, identifier columns, and duplicate rows
+- **Baseline probe**: 3-fold cross-validated LightGBM with learning curves and over/underfitting flags. Early stopping uses a holdout from the training data, so the reported score isn't tuned on the data it's measured on.
+- **Stability**: retrains on several subsamples to check whether results hold up
+- **Model Arena**: Logistic Regression, Random Forest and LightGBM for classification; Ridge, Lasso, Random Forest and LightGBM for regression. All are compared on the same folds with preprocessing fitted inside each fold, then ranked by balanced accuracy or RMSE.
 
-### Model Arena
-- Auto-trains Random Forest, LightGBM, Logistic Regression (classification) or Ridge, Lasso, Random Forest, LightGBM (regression)
-- Ranks all models by balanced accuracy or RMSE with training time and variance
-- Only runs on labeled datasets with a specified target column
+### Unsupervised diagnostics
+- **Clustering**: silhouette scores for k = 2 to 5, plus stability across subsamples
+- **Anomaly detection**: Isolation Forest with a score distribution
 
-### Time Series
-- Auto-detects datetime columns and forecast targets
-- Stationarity testing — ADF and KPSS with differencing recommendations
-- Seasonal decomposition with auto-detected period
-- ACF and PACF with confidence bands
-- Missing timestamp detection and coverage analysis
-- Baseline models — Naive, Moving Average, Exponential Smoothing, Auto-ARIMA ranked by RMSE
+### Time series
+- Automatic datetime and target detection
+- ADF and KPSS stationarity tests with differencing advice
+- Seasonal decomposition, ACF/PACF, missing-timestamp coverage
+- Baselines: Naive, Moving Average, Exponential Smoothing, Auto-ARIMA, ranked by RMSE
 
 ### NLP
-- Free-text column detection with vocabulary and lexical diversity analysis
-- Text quality metrics — empty ratio, duplicate ratio, URL ratio
-- Vectorization recommendations — TF-IDF vs embeddings
-- Per-class word analysis for labeled datasets
+- Free-text column detection, vocabulary and lexical diversity
+- Empty, duplicate and URL ratios
+- TF-IDF vs. embeddings recommendation, per-class top words
 
-### Drift Detection
-- Upload train and test splits to get per-column KS-statistic drift scores
-- New category detection and missing rate delta
+### Drift detection
+- Per-column drift scores (KS test for numeric, distribution shift for categorical)
+- Categories that appear only in the test set, and changes in missing rates
 
 ### Outputs
-- **Preprocessing script** — one-click export of a production-ready Python script tailored to your EDA results
-- **HTML report** — full diagnostic report with charts, tables, and recommendations
-- **Time series script** — pipeline script with load, stationarity check, decomposition, train/test split, and all baseline models
+- **Preprocessing script**, a ready-to-run Python script based on your report
+- **Time-series pipeline script**, used when a time series is detected: loading, stationarity, decomposition, train/test split and baselines
+- **NLP preprocessing script**, used when free-text columns are detected
+- **HTML report**, the full report with charts, for sharing
+
+### About the ML Readiness Score
+
+The score combines data health, trainability and leakage risk into one 0–100 number. It's a **heuristic**: it adds up rule-based penalties and isn't calibrated against real model outcomes. Use it to spot problems, and read the penalties and recommendations behind it rather than treating the number as a verdict.
+
+Results are reproducible: the same CSV gives the same report every time.
 
 ---
 
-## Analysis Profiles
+## Analysis profiles
 
-| Profile | Use case |
-|---|---|
-| Standard | General purpose defaults |
-| Finance | Strict leakage detection, low anomaly tolerance |
-| Healthcare | High missing value tolerance, strict cardinality thresholds |
-| NLP / Text | Relaxed cardinality thresholds for text-heavy datasets |
+Profiles change the thresholds Athena uses to flag issues. Leakage checks are the same in every profile.
+
+| Profile | Flags missing values above | High cardinality above | Redundant if correlation above | Skew flagged above | Anomaly rate flagged above |
+|---|---|---|---|---|---|
+| Standard | 30% | 50 categories | 0.98 | 1.0 | 15% |
+| Finance | 5% | 100 categories | 0.95 | 0.5 | 5% |
+| Healthcare | 20% | 50 categories | 0.98 | 1.0 | 10% |
+| NLP | 50% | 200 categories | 0.99 | 2.0 | 20% |
 
 ---
 
-## Installation
+## CLI
 
 ```bash
-pip install athena-eda
+athena run                  # start Athena and open the browser
+athena run --port 9000      # use a different port
+athena run --no-browser     # don't open a browser tab
+athena info                 # system and package info
+athena doctor               # check the installation
+athena version              # installed version
+athena update               # upgrade to the latest release
 ```
 
-Requires Python 3.9+. All dependencies including `statsmodels` and `pmdarima` for time series are included in the base install.
+## Limits
 
-### Running locally
+- CSV files only, up to 100 MB
+- The first 200,000 rows are analyzed
+- The Model Arena trains on at most 50,000 rows
+
+---
+
+## Development
 
 ```bash
-athena run
+git clone https://github.com/SaurabhLingam/Athena.git
+cd Athena
+python -m venv venv
+venv\Scripts\activate          # macOS/Linux: source venv/bin/activate
+pip install -r requirements-dev.txt
+pip install -e .
 ```
 
-Opens your browser at `http://127.0.0.1:8000` automatically.
-
-### Other commands
+Run the backend and the frontend dev server in two terminals:
 
 ```bash
-athena info      # show system and package info
-athena doctor    # check all dependencies
-athena version   # show current version
-athena update    # update to latest version
+uvicorn backend.main:app --reload --port 8000
 ```
+
+```bash
+cd frontend
+npm install
+npm run dev                    # http://localhost:3000
+```
+
+Run the tests:
+
+```bash
+python -m pytest
+```
+
+### Building a release
+
+```bash
+cd frontend && npm run build && cd ..   # writes the UI into backend/static/
+python -m build                          # builds dist/athena_eda-<version>*
+python -m twine upload dist/athena_eda-<version>*
+```
+
+Bump `version` in `pyproject.toml` first. The frontend must be rebuilt for UI changes to reach the package.
 
 ---
 
 ## Stack
 
-**Frontend** — React, TypeScript, Vite, Recharts
+**Frontend**: React, TypeScript, Vite, Recharts
 
-**Backend** — FastAPI, Python, LightGBM, scikit-learn, statsmodels, pmdarima, pandas
-
----
+**Backend**: FastAPI, pandas, scikit-learn, LightGBM, statsmodels, pmdarima
 
 ## License
 
-MIT
+[MIT](LICENSE)
