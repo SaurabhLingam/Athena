@@ -96,3 +96,15 @@ def test_date_columns_are_detected_and_left_out_of_drift():
     assert "day" not in {c["column"] for c in result["column_drift"]}
     assert "day" not in result["new_categories"]
     assert result["date_ranges"]["train"]["day"] == {"min": "2020-01-01", "max": "2020-07-18"}
+
+
+def test_whole_number_floats_are_numeric_features():
+    rng = np.random.default_rng(0)
+    n = 1000
+    df = pd.DataFrame({
+        "Time": np.sort(rng.integers(0, 170_000, n)).astype(float),  # seconds, mostly unique
+        "Population": rng.integers(100, 5000, n).astype(float),      # counts, p5 > 100
+        "target": rng.integers(0, 2, n),
+    })
+    views = EdaToolKit().build_column_views(df, "target")
+    assert {"Time", "Population"} <= set(views["numeric_features"])

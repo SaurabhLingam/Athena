@@ -80,7 +80,8 @@ class EdaToolKit:
             n_unique = s.nunique(dropna=True)
             unique_ratio = n_unique / n_rows
             is_numeric = pd.api.types.is_numeric_dtype(s)
-            is_integer = is_numeric and (s.dropna() % 1 == 0).all()
+            # Decided by dtype: whole-number floats (Population, seconds) are measurements.
+            is_integer = pd.api.types.is_integer_dtype(s)
 
 
 
