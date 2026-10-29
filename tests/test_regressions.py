@@ -190,3 +190,21 @@ def test_integer_columns_are_numeric_unless_few_values_or_code_names():
     assert "weekday" in views["categorical_features"]
     for col in ("store_code", "zipcode"):
         assert col in views["categorical_features"] + views["identifiers"]
+
+
+def test_duplicates_in_low_cardinality_features_are_not_leakage():
+    rng = np.random.default_rng(0)
+    n = 2000
+    low = pd.DataFrame({f"q{i}": rng.integers(0, 2, n) for i in range(5)})  # 32 possible rows
+    low["target"] = rng.integers(0, 2, n)
+    report = MLdiagnosticskit()
+    eda = EdaToolKit()
+    out = report.run_leakage_checks(low, eda.feature_correlation(low, "target"),
+                                    eda.build_column_views(low, "target"), "target")
+    assert out["leakage_score"] == 0
+    assert any("duplicate feature rows" in r for r in report.recommendation_buckets["Leakage Checks"])
+
+    # Repeated records with continuous features are still scored
+    rich = pd.DataFrame({"a": rng.normal(size=500), "b": rng.normal(size=500)})
+    rich = pd.concat([rich] * 2, ignore_index=True).assign(target=rng.integers(0, 2, 1000))
+    assert _leakage(rich)["leakage_score"] >= 25
