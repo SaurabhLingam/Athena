@@ -28,9 +28,9 @@ def labeled_csv(tmp_path):
 def test_describe_dataset(labeled_csv):
     out = describe_dataset(labeled_csv)
     assert out["rows_total"] == 300
-    cols = {c["name"]: c for c in out["columns"]}
+    cols = {c.split("|")[0]: c.split("|") for c in out["columns"]}
     assert set(cols) == {"x1", "x2", "leak", "color", "target"}
-    assert cols["x2"]["missing_pct"] > 0
+    assert float(cols["x2"][4]) > 0
 
 
 def test_describe_dataset_samples_large_csv(labeled_csv):
@@ -88,3 +88,23 @@ def test_run_baselines_no_warning_on_honest_data(tmp_path):
     df.to_csv(tmp_path / "honest.csv", index=False)
     out = run_baselines(str(tmp_path / "honest.csv"), "y")
     assert out["status"] == "ok" and "leakage_warning" not in out
+
+
+def test_describe_dataset_is_compact_for_wide_files(tmp_path):
+    import json
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame(rng.normal(size=(200, 45)), columns=[f"V{i}" for i in range(45)])
+    df.to_csv(tmp_path / "wide.csv", index=False)
+    out = describe_dataset(str(tmp_path / "wide.csv"))
+    assert len(out["columns"]) == 30 and out["more_columns"] == 15
+    assert len(json.dumps(out, indent=2)) < 2000
+
+
+def test_top_drifted_omits_zero_scores(tmp_path):
+    rng = np.random.default_rng(1)
+    ref = pd.DataFrame({"a": rng.normal(0, 1, 500), "same": np.zeros(500)})
+    cur = ref.assign(a=rng.normal(3, 1, 500))
+    ref.to_csv(tmp_path / "r.csv", index=False)
+    cur.to_csv(tmp_path / "c.csv", index=False)
+    out = check_drift(str(tmp_path / "r.csv"), str(tmp_path / "c.csv"))
+    assert all(c["drift_score"] > 0 for c in out["top_drifted"])

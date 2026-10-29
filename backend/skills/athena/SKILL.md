@@ -11,9 +11,10 @@ Every tool accepts `max_rows`: pass it (e.g. `50000`) for CSVs over ~100k rows t
 ## Order
 
 1. **`describe_dataset(csv_path)`** — always first.
-   - Use `columns[].name` to get the exact target column name. If the user didn't name a target, propose one (a column whose name or role suggests a label, e.g. `target`, `label`, `churn`, `price`) and confirm before continuing.
-   - `role: datetime_cols` columns are dates (range in `date_ranges`). They're good candidates for a time-based split before `check_drift`.
-   - Note `role: identifiers` columns (IDs) and high `missing_pct` columns. They'll come up again in later steps.
+   - Each `columns` entry is `name|dtype|role|n_unique|missing_pct` (roles are explained in `roles`). Only the first 30 columns are listed. If `more_columns` is present and the target isn't among them, ask the user for the target name (it's often the last column) rather than guessing.
+   - Use the exact name from `columns` as the target column. If the user didn't name a target, propose one (a column whose name or role suggests a label, e.g. `target`, `label`, `churn`, `price`) and confirm before continuing.
+   - `date` role columns are dates (range in `date_ranges`). They're good candidates for a time-based split before `check_drift`.
+   - Note `id` role columns (IDs) and high `missing_pct` columns. They'll come up again in later steps.
 2. **`check_leakage(csv_path, target_col)`** — before any modelling.
    - `risk: high` (score ≥ 40): a feature almost certainly encodes the target. Baseline scores will be inflated and meaningless until `suspicious_features` are removed. Tell the user which columns and why (`issues`), and ask before continuing.
    - `risk: medium`: usually heavy duplicate rows or one suspicious feature. Report it and continue, but caveat the baseline numbers.
@@ -25,7 +26,7 @@ Every tool accepts `max_rows`: pass it (e.g. `50000`) for CSVs over ~100k rows t
    - `status: skipped` means the target isn't a usable classification or regression target.
 4. **`check_drift(reference_csv, current_csv)`** — only when there's a second dataset (train vs test, last month vs this month, train vs production).
    - `overall_drift_score` is 0–100. Below 25 is negligible, 25–50 moderate, above 50 significant.
-   - `top_drifted` lists per-column `drift_score`. Numeric columns include KS statistic, p-value and both means, so describe the direction of the shift.
+   - `top_drifted` lists up to 5 columns with a non-zero `drift_score`. Numeric columns include KS statistic, p-value and both means, so describe the direction of the shift.
    - `new_categories` are values seen only in the current data. A model will treat them as unseen.
    - Date columns are not compared as distributions. `date_ranges` gives each side's min/max date instead, so use it to say what period each dataset covers.
    - Identifier columns (ID-like names, or near-unique integer/string columns) are skipped. If a column the user cares about is missing from the output, that's why.

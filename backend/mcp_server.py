@@ -19,6 +19,7 @@ from backend.profiles import get_profile
 
 SEED = 42
 TOP_N = 5
+MAX_DESCRIBE_COLS = 30
 NEAR_PERFECT_R2 = 0.999
 NEAR_PERFECT_BALANCED_ACC = 0.98
 
@@ -76,24 +77,24 @@ def describe_dataset(csv_path: str, max_rows: int | None = None) -> dict:
     basic = eda.basicdatainfo(df)
     views = eda.build_column_views(df)
     role_of = {}
-    for role in ("identifiers", "datetime_cols", "numeric_features", "categorical_features", "entity_keys", "free_text_cols"):
+    for role, short in (("identifiers", "id"), ("datetime_cols", "date"), ("numeric_features", "num"),
+                        ("categorical_features", "cat"), ("entity_keys", "key"), ("free_text_cols", "text")):
         for c in views.get(role, []):
-            role_of.setdefault(c, role)
+            role_of.setdefault(c, short)
     missing = df.isnull().mean()
+    shown = df.columns[:MAX_DESCRIBE_COLS]
+    # One compact string per column keeps wide files small once pretty-printed
     columns = [
-        {
-            "name": c,
-            "dtype": str(df[c].dtype),
-            "role": role_of.get(c, "other"),
-            "n_unique": int(basic["unique_values"][c]),
-            "missing_pct": round(float(missing[c]) * 100, 2),
-        }
-        for c in df.columns
+        f"{c}|{df[c].dtype}|{role_of.get(c, 'other')}|{int(basic['unique_values'][c])}|{round(float(missing[c]) * 100, 2):g}"
+        for c in shown
     ]
     return {
         **meta,
         "n_cols": basic["cols"],
+        "column_format": "name|dtype|role|n_unique|missing_pct",
+        "roles": "num=numeric, cat=categorical, id=identifier, key=entity key, date=date, text=free text",
         "columns": columns,
+        **({"more_columns": len(df.columns) - len(shown)} if len(df.columns) > len(shown) else {}),
         "total_missing_pct": round(float(df.isnull().values.mean()) * 100, 2),
         "duplicate_rows": int(df.duplicated().sum()),
         "date_ranges": eda.date_ranges(df, views["datetime_cols"]),
@@ -176,7 +177,7 @@ def check_drift(reference_csv: str, current_csv: str, max_rows: int | None = Non
         "summary": result["summary"],
         "n_columns_compared": len(result["column_drift"]),
         "n_drifted": sum(c["drift_score"] > 25 for c in drifted),
-        "top_drifted": drifted[:TOP_N],
+        "top_drifted": [c for c in drifted if c["drift_score"] > 0][:TOP_N],
         "new_categories": {k: v[:TOP_N] for k, v in list(result["new_categories"].items())[:TOP_N]},
         "missing_rate_delta": result["missing_rate_delta"],
         "date_ranges": result["date_ranges"],
