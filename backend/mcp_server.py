@@ -52,7 +52,8 @@ def _load(csv_path: str, max_rows: int | None) -> tuple["pd.DataFrame", dict]:
     return df, meta
 
 
-PLACEHOLDER_TOKENS = {"?", "-", "--", "na", "n/a", "nan", "null", "none", "#n/a", "<na>"}
+# "none" and "unknown" are left out: they are often real categories (e.g. "None" for no alarm)
+PLACEHOLDER_TOKENS = {"?", "-", "--", "na", "n/a", "nan", "null", "#n/a", "<na>"}
 NUMERIC_SENTINELS = (-999, -9999, 999999)
 
 

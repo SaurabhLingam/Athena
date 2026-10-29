@@ -165,7 +165,7 @@ def test_placeholders_and_sentinels_count_as_missing(tmp_path):
     assert ph["age"] == {"?": 5, "N/A": 3}
     assert ph["income"] == {"-999": 4}
     assert "score" not in ph
-    assert ph["city"] == {"<blank>": 3, "none": 2}
+    assert ph["city"] == {"<blank>": 3}             # "none" is kept as a real category
     cols = {c.split("|")[0]: c.split("|") for c in out["columns"]}
     assert cols["age"][1] == "float64" and cols["age"][2] == "num"   # parsed as numeric once cleaned
     assert float(cols["age"][4]) == 8.0
@@ -211,3 +211,13 @@ def test_describe_dataset_target_balance_and_redundant_pairs(tmp_path):
     assert any("temp_c" in p and "temp_f" in p for p in pairs)
     assert not any("other" in p for p in pairs)
     assert "error" in describe_dataset(str(tmp_path / "r.csv"), target_col="missing")
+
+
+def test_none_and_unknown_are_real_categories(tmp_path):
+    df = pd.DataFrame({"alarm": ["None", "Low", "High", "none", "Unknown", "Low"] * 20,
+                       "x": range(120)})
+    df.to_csv(tmp_path / "cats.csv", index=False)
+    out = describe_dataset(str(tmp_path / "cats.csv"))
+    assert "alarm" not in out.get("placeholder_missing", {})
+    alarm = next(c for c in out["columns"] if c.startswith("alarm|"))
+    assert alarm.split("|")[3] == "5" and alarm.split("|")[4] == "0"
