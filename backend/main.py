@@ -13,12 +13,14 @@ from starlette.requests import Request
 
 try:
     from backend.eda import EdaToolKit
+    from backend.loading import read_csv_clean
     from backend.profiles import get_profile
     from backend.ml import MLdiagnosticskit
     from backend.timeseries import TimeSeriesKit
     from backend.model_arena import ModelArenaKit
 except ImportError:
     from eda import EdaToolKit
+    from loading import read_csv_clean
     from profiles import get_profile
     from ml import MLdiagnosticskit
     from timeseries import TimeSeriesKit
@@ -84,11 +86,8 @@ def check_upload(upload_file):
 def read_csv_sample(upload_file, sample_rows=200_000):
     upload_file.file.seek(0)
     try:
-        try:
-            df = pd.read_csv(upload_file.file, encoding="utf-8", nrows=sample_rows)
-        except UnicodeDecodeError:
-            upload_file.file.seek(0)
-            df = pd.read_csv(upload_file.file, encoding="latin1", nrows=sample_rows)
+        df, placeholders = read_csv_clean(upload_file.file, nrows=sample_rows)
+        df.attrs["placeholders"] = placeholders
         return df
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to read CSV sample: {str(e)}")
@@ -121,6 +120,7 @@ def analyze_csv(request: Request, file: UploadFile = File(...), data_type: str =
     # Logic grouped inside safe_run to handle edge-case crashes
     base_eda = {
         "basic": safe_run(eda.basicdatainfo, df),
+        "placeholder_missing": df.attrs.get("placeholders", {}),
         "col_views": column_views,
         "missingness": safe_run(eda.missingdata, df, target_col, eda.cfg["missing_threshold"] * 100),
         "numeric_summary": safe_run(eda.numeric_summary, df, target_col),

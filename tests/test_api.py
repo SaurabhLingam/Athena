@@ -143,3 +143,32 @@ def test_timeseries_detection_finds_dates_and_skips_text():
     assert set(kit.detect_datetime_cols(df)) == {"iso", "us", "native"}
     for col in ("iso", "us", "native"):
         assert len(kit.prepare_series(df, col, "sales")) == n
+
+
+def test_report_and_describe_dataset_agree_on_placeholders_and_roles(analyze, tmp_path):
+    from backend.mcp_server import describe_dataset
+    rng = np.random.default_rng(0)
+    n = 300
+    weight = rng.normal(70, 10, n).round(1).astype(object)
+    weight[:6] = "N.A."
+    weight[6:9] = "#VALUE!"
+    age = rng.integers(18, 90, n)
+    age[:5] = 999
+    city = rng.choice(["Pune", "Delhi"], n).astype(object)
+    city[:4] = "missing"
+    df = pd.DataFrame({"weight": weight, "age": age, "city": city,
+                       "x": rng.normal(size=n), "y": rng.integers(0, 2, n)})
+    path = tmp_path / "ph.csv"
+    df.to_csv(path, index=False)
+
+    out = describe_dataset(str(path))
+    roles = {c.split("|")[0]: c.split("|")[2] for c in out["columns"]}
+    report = analyze(pd.read_csv(path, keep_default_na=False), target_col="y").json()
+    views = report["eda"]["col_views"]
+    short = {"numeric_features": "num", "categorical_features": "cat", "identifiers": "id",
+             "entity_keys": "key", "datetime_cols": "date", "free_text_cols": "text"}
+    report_roles = {c: short[r] for r, cols in views.items() if r in short for c in cols}
+    assert report["eda"]["placeholder_missing"] == out["placeholder_missing"]
+    assert out["placeholder_missing"]["weight"] == {"N.A.": 6, "#VALUE!": 3}
+    assert report_roles == {k: v for k, v in roles.items() if k != "y"}
+    assert report_roles["weight"] == "num"
