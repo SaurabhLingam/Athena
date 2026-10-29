@@ -152,3 +152,22 @@ def test_geographic_code_names_are_not_numeric():
     assert {"2020 Census Tract", "Legislative District", "zip"} <= set(views["categorical_features"])
     assert "county_fips" in views["identifiers"]
     assert not set(views["numeric_features"])
+
+
+def test_single_feature_leaks_are_flagged():
+    rng = np.random.default_rng(0)
+    n = 600
+    target = rng.choice(["low", "mid", "high", "very_high", "max", "none"], n)  # 6 classes
+    code = pd.Series(target).map({"low": "L1", "mid": "M2", "high": "H3", "very_high": "V4",
+                                  "max": "X5", "none": "N6"})
+    # Post-outcome column: recorded after the outcome, agrees with it 99.5% of the time
+    outcome_status = np.where(rng.random(n) < 0.995, target, "unknown")
+    df = pd.DataFrame({
+        "x": rng.normal(size=n),
+        "target_code": code,
+        "outcome_status": outcome_status,
+        "target": target,
+    })
+    flagged = set(_leakage(df)["suspicious_features"])
+    assert {"target_code", "outcome_status"} <= flagged
+    assert "x" not in flagged

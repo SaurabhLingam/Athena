@@ -30,6 +30,8 @@ LEAKAGE_CORR_THRESHOLD = 0.95
 # Single-feature AUC reaches 0.95 far more easily than |correlation| does,
 # so strong-but-honest predictors need a stricter cut-off.
 LEAKAGE_AUC_THRESHOLD = 0.995
+# Cross-validated balanced accuracy / R^2 of a one-feature lookup model.
+SINGLE_FEATURE_LEAK_THRESHOLD = 0.98
 
 
 def lgb_params(task_type: str, n_classes: int = 2) -> dict:
@@ -390,6 +392,35 @@ class MLdiagnosticskit:
             aucs.append(max(auc, 1 - auc))
         return float(np.mean(aucs)), LEAKAGE_AUC_THRESHOLD
 
+    @staticmethod
+    def _single_feature_score(feature: pd.Series, target: pd.Series, n_folds: int = 3):
+        """Cross-validated score of a lookup model on one feature: each value (or quantile
+        bin, for continuous columns) predicts the training folds' majority class or mean.
+        Returns (metric_name, score) or None."""
+        pair = pd.DataFrame({"x": feature, "y": target}).dropna(subset=["y"])
+        if len(pair) < 30 or pair["x"].nunique() < 2:
+            return None
+        y_numeric = pd.to_numeric(pair["y"], errors="coerce")
+        is_regression = bool(y_numeric.notna().all() and y_numeric.nunique() > 10)
+        x = pair["x"]
+        if pd.api.types.is_numeric_dtype(x) and x.nunique() > 20:
+            x = pd.qcut(x, q=50 if is_regression else 20, duplicates="drop")
+        keys = x.astype(str).to_numpy()  # NaN becomes its own "nan" bin
+        y = (y_numeric if is_regression else pair["y"].astype(str)).to_numpy()
+        kf = KFold(n_splits=n_folds, shuffle=True, random_state=SEED)
+        preds = np.empty(len(y), dtype=object if not is_regression else float)
+        for tr, te in kf.split(keys):
+            train = pd.DataFrame({"k": keys[tr], "y": y[tr]})
+            if is_regression:
+                mapping, fallback = train.groupby("k")["y"].mean(), float(np.mean(y[tr]))
+            else:
+                mapping = train.groupby("k")["y"].agg(lambda v: v.value_counts().idxmax())
+                fallback = pd.Series(y[tr]).value_counts().idxmax()
+            preds[te] = pd.Series(keys[te]).map(mapping).fillna(fallback).to_numpy()
+        if is_regression:
+            return "R^2", float(r2_score(y, preds.astype(float)))
+        return "balanced_accuracy", float(balanced_accuracy_score(y, preds.astype(str)))
+
     def run_leakage_checks(self, df: pd.DataFrame, feature_correlation: Dict, col_views: Dict, target_col: str):
         leakage_score = 0
         suspicious = []
@@ -428,6 +459,20 @@ class MLdiagnosticskit:
                 
                 if col:
                     self.add_recommendation("Leakage Checks", f"Review {col}: very high target separation (shift={shift:.3f}), verify it's not derived from target")
+
+        # A single feature that nearly predicts the target on its own: post-outcome
+        # columns, coded copies of (multiclass) targets, near-duplicates of the target.
+        for col in col_views.get("numeric_features", []) + col_views.get("categorical_features", []):
+            if col in suspicious or col not in df.columns:
+                continue
+            scored = self._single_feature_score(df[col], df[target_col])
+            if scored is not None and scored[1] >= SINGLE_FEATURE_LEAK_THRESHOLD:
+                leakage_score += 40
+                suspicious.append(col)
+                self.add_penalty(
+                    "Leakage Checks",
+                    f"Severe leakage risk: {col} alone predicts the target (single-feature CV {scored[0]} {scored[1]:.3f})"
+                )
 
         id_cols = col_views.get("identifiers", [])
         if id_cols:
