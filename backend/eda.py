@@ -19,6 +19,18 @@ _TIME_PARTS = ("", " %H:%M", " %H:%M:%S", "T%H:%M:%S", " %H.%M.%S")
 DATE_FORMATS = [d + t for d in _DATE_PARTS for t in _TIME_PARTS]
 
 
+def _swap_day_month(fmt: str):
+    """%m/%d/%Y <-> %d/%m/%Y; None for formats without a day/month order question (ISO, mixed)."""
+    if fmt.startswith("%m") or fmt.startswith("%d"):
+        return fmt.replace("%m", "@M@").replace("%d", "%m").replace("@M@", "%d")
+    return None
+
+
+def _range(d: pd.Series) -> dict:
+    return {"min": str(d.min().date()) if d.notna().any() else None,
+            "max": str(d.max().date()) if d.notna().any() else None}
+
+
 class EdaToolKit:
     def __init__(self, cfg: dict = None):
         try:
@@ -67,6 +79,14 @@ class EdaToolKit:
             return pd.to_datetime(s, errors="coerce", format="mixed"), "mixed"
 
     @staticmethod
+    def _parses_all(s: pd.Series, fmt: str) -> bool:
+        try:
+            pd.to_datetime(pd.Series(s.dropna().astype(str).str.strip().unique()), format=fmt, errors="raise")
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    @staticmethod
     def is_datetime_like(s: pd.Series, sample_size: int = 200) -> bool:
         """Datetime dtype, or strings where >=90% of a sample parse as dates."""
         if pd.api.types.is_datetime64_any_dtype(s):
@@ -85,9 +105,16 @@ class EdaToolKit:
         out = {}
         for col in cols:
             d, fmt = EdaToolKit.parse_dates(df[col])
-            out[col] = {"min": str(d.min().date()) if d.notna().any() else None,
-                        "max": str(d.max().date()) if d.notna().any() else None,
-                        "format": fmt}
+            swapped = _swap_day_month(fmt)
+            if swapped and EdaToolKit._parses_all(df[col], swapped):
+                # Every value fits both orders (all days <= 12): don't guess
+                alt = pd.to_datetime(df[col].astype(str).str.strip().where(df[col].notna()),
+                                     format=swapped, errors="coerce")
+                month_first, day_first = (d, alt) if fmt.startswith("%m") else (alt, d)
+                out[col] = {"format": "ambiguous",
+                            "month_first": _range(month_first), "day_first": _range(day_first)}
+            else:
+                out[col] = {**_range(d), "format": fmt}
         return out
 
     def build_column_views(self, df: pd.DataFrame, target_col: str | None = None):

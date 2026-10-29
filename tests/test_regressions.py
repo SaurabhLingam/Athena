@@ -221,3 +221,15 @@ def test_dates_use_one_day_first_or_month_first_format_per_column():
     df = pd.DataFrame({"when": dayfirst.tolist() * 5, "x": range(20)})
     assert EdaToolKit().date_ranges(df, ["when"])["when"] == {
         "min": "2021-04-03", "max": "2021-12-12", "format": "%d/%m/%Y"}
+
+
+def test_ambiguous_day_month_dates_report_both_ranges():
+    df = pd.DataFrame({"when": ["03/04/2021", "01/02/2021", "12/11/2021"]})
+    out = EdaToolKit().date_ranges(df, ["when"])["when"]
+    assert out == {
+        "format": "ambiguous",
+        "month_first": {"min": "2021-01-02", "max": "2021-12-11"},
+        "day_first": {"min": "2021-02-01", "max": "2021-11-12"},
+    }
+    iso = EdaToolKit().date_ranges(pd.DataFrame({"d": ["2021-03-04", "2021-01-02"]}), ["d"])["d"]
+    assert iso["format"] == "%Y-%m-%d"

@@ -29,6 +29,7 @@ Every tool accepts `max_rows`: pass it (e.g. `50000`) for CSVs over ~100k rows t
    - `overall_drift_score` is 0–100. Below 25 is negligible, 25–50 moderate, above 50 significant.
    - `top_drifted` lists up to 5 columns with a non-zero `drift_score`. The score is the size of the shift (KS statistic for numeric columns, total variation distance for categorical ones, ×100). A column counts as drifted above 10. `ks_pvalue` is for reference only: on large samples tiny shifts are "significant". Numeric columns include KS statistic, p-value and both means, so describe the direction of the shift.
    - `new_categories` are values seen only in the current data. A model will treat them as unseen.
+   - If a `date_ranges` entry has `format: "ambiguous"`, every value fits both day-first and month-first (all days are 12 or less), so both readings are given as `day_first` and `month_first`. Ask the user which one is right, or infer it from context, before relying on dates from that column.
    - Date columns are not compared as distributions. `date_ranges` gives each side's min/max date instead, so use it to say what period each dataset covers.
    - Identifier columns (ID-like names, or near-unique integer/string columns) are skipped. If a column the user cares about is missing from the output, that's why.
 
