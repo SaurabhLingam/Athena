@@ -16,6 +16,7 @@
 - Model Arena classifiers use balanced class weights, so baselines on imbalanced data are no longer dominated by the majority class (BRFSS diabetes: balanced accuracy 0.575 → 0.754).
 - Drift scored statistical significance instead of shift size: any column with p < 0.05 got +20 points, so on large files tiny shifts counted as drift (creditcard `Amount`, KS 0.024, scored 22.4). Numeric drift is now the KS statistic and categorical drift the total variation distance (both ×100). New categories count through their share of rows instead of +10 each. A column drifts above 10 (was 25 including the bonus). `ks_pvalue` is still reported.
 - Tool messages are ASCII-only (e.g. `R^2 ~ 1.00000`), so consoles with a non-UTF-8 code page can print them.
+- Columns whose names contain `tract`, `district`, `fips` or `zip` are treated as categorical (or as identifiers when nearly unique) regardless of dtype. Float-typed geographic codes such as `2020 Census Tract` were being used as continuous numbers.
 
 ### Changed
 - `describe_dataset` lists the first 30 columns as compact `name|dtype|role|n_unique|missing_pct` strings, plus a count and the names (`hidden_columns`) of the rest. `check_drift`'s `top_drifted` omits columns with a drift score of 0.
@@ -23,3 +24,4 @@
 
 ### Known issues
 - Column roles depend on the dtype pandas infers. A float column whose values are all whole numbers is read as integers when the file stores them without decimals, and is then classed as an entity key or category instead of a numeric feature. Example: creditcard `Time` read from only its first 50k rows becomes integer-typed. `max_rows` isn't affected, because it reads the whole file before sampling.
+- By design, entity keys such as `VIN (1-10)` are still compared in drift, so their unseen values appear in `new_categories`. They're skipped as model features but can carry real information (a VIN prefix encodes make and model).

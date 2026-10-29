@@ -2,6 +2,9 @@ import re
 import warnings
 import pandas as pd
 import numpy as np
+CODE_NAME_HINTS = ("tract", "district", "fips", "zip")
+
+
 class EdaToolKit:
     def __init__(self, cfg: dict = None):
         try:
@@ -74,6 +77,13 @@ class EdaToolKit:
                 continue
             if self.is_datetime_like(df[col]):
                 datetime_cols.append(col)
+                continue
+            # Geographic codes are labels even when stored as floats (2020 Census Tract)
+            if any(h in str(col).lower() for h in CODE_NAME_HINTS):
+                if df[col].nunique(dropna=True) / n_rows >= 0.95:
+                    identifiers.append(col)
+                else:
+                    categorical_features.append(col)
                 continue
 
             s = df[col]

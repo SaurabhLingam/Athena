@@ -136,3 +136,19 @@ def test_drift_scores_effect_size_not_significance():
     assert cols["tiny"]["drift_score"] < DRIFT_THRESHOLD   # ...but a small shift
     assert cols["big"]["drift_score"] > DRIFT_THRESHOLD
     assert cols["cat"]["drift_score"] < DRIFT_THRESHOLD    # 5 rare new categories are not drift
+
+
+def test_geographic_code_names_are_not_numeric():
+    rng = np.random.default_rng(0)
+    n = 1000
+    df = pd.DataFrame({
+        "2020 Census Tract": rng.choice(np.arange(53033000100, 53033030000, 100), n).astype(float),
+        "Legislative District": rng.integers(1, 50, n).astype(float),
+        "zip": rng.choice([98101.0, 98052.0, 98004.0], n),
+        "county_fips": rng.permutation(n) + 53000,   # near-unique -> ID
+        "target": rng.normal(size=n),
+    })
+    views = EdaToolKit().build_column_views(df, "target")
+    assert {"2020 Census Tract", "Legislative District", "zip"} <= set(views["categorical_features"])
+    assert "county_fips" in views["identifiers"]
+    assert not set(views["numeric_features"])
