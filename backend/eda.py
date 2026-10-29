@@ -13,6 +13,12 @@ def looks_like_code_name(col) -> bool:
     return any(h in name for h in CODE_NAME_HINTS) or bool(words & CODE_NAME_WORDS)
 
 
+_DATE_PARTS = ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%d/%m/%Y", "%m-%d-%Y", "%d-%m-%Y",
+               "%d.%m.%Y", "%m/%d/%y", "%d/%m/%y")
+_TIME_PARTS = ("", " %H:%M", " %H:%M:%S", "T%H:%M:%S", " %H.%M.%S")
+DATE_FORMATS = [d + t for d in _DATE_PARTS for t in _TIME_PARTS]
+
+
 class EdaToolKit:
     def __init__(self, cfg: dict = None):
         try:
@@ -43,6 +49,24 @@ class EdaToolKit:
         return x
     
     @staticmethod
+    def parse_dates(s: pd.Series):
+        """Parse a column with one format for every value, so 03/04 can't mean March
+        in one row and April in the next. Tries ISO, then month-first, then day-first,
+        and falls back to per-value parsing only if no single format fits.
+        Returns (parsed series, format or "mixed")."""
+        values = s.dropna().astype(str).str.strip()
+        uniques = pd.Series(values.unique())
+        for fmt in DATE_FORMATS:
+            try:
+                pd.to_datetime(uniques, format=fmt, errors="raise")
+            except (ValueError, TypeError):
+                continue
+            return pd.to_datetime(s.astype(str).str.strip().where(s.notna()), format=fmt, errors="coerce"), fmt
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return pd.to_datetime(s, errors="coerce", format="mixed"), "mixed"
+
+    @staticmethod
     def is_datetime_like(s: pd.Series, sample_size: int = 200) -> bool:
         """Datetime dtype, or strings where >=90% of a sample parse as dates."""
         if pd.api.types.is_datetime64_any_dtype(s):
@@ -53,20 +77,17 @@ class EdaToolKit:
         # Needs a date separator, so plain numbers and codes are never parsed as dates
         if sample.empty or not sample.str.contains(r"\d[-/.]\d|\d{4}-\d", regex=True).mean() >= 0.9:
             return False
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            parsed = pd.to_datetime(sample, errors="coerce", format="mixed")
+        parsed, _ = EdaToolKit.parse_dates(sample)
         return parsed.notna().mean() >= 0.9
 
     @staticmethod
     def date_ranges(df: pd.DataFrame, cols: list) -> dict:
         out = {}
         for col in cols:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                d = pd.to_datetime(df[col], errors="coerce", format="mixed")
+            d, fmt = EdaToolKit.parse_dates(df[col])
             out[col] = {"min": str(d.min().date()) if d.notna().any() else None,
-                        "max": str(d.max().date()) if d.notna().any() else None}
+                        "max": str(d.max().date()) if d.notna().any() else None,
+                        "format": fmt}
         return out
 
     def build_column_views(self, df: pd.DataFrame, target_col: str | None = None):

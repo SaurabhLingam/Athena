@@ -95,7 +95,7 @@ def test_date_columns_are_detected_and_left_out_of_drift():
     result = DriftAnalyzer().compare(df.iloc[:200], df.iloc[200:])
     assert "day" not in {c["column"] for c in result["column_drift"]}
     assert "day" not in result["new_categories"]
-    assert result["date_ranges"]["train"]["day"] == {"min": "2020-01-01", "max": "2020-07-18"}
+    assert result["date_ranges"]["train"]["day"] == {"min": "2020-01-01", "max": "2020-07-18", "format": "%Y-%m-%d"}
 
 
 def test_whole_number_floats_are_numeric_features():
@@ -208,3 +208,16 @@ def test_duplicates_in_low_cardinality_features_are_not_leakage():
     rich = pd.DataFrame({"a": rng.normal(size=500), "b": rng.normal(size=500)})
     rich = pd.concat([rich] * 2, ignore_index=True).assign(target=rng.integers(0, 2, 1000))
     assert _leakage(rich)["leakage_score"] >= 25
+
+
+def test_dates_use_one_day_first_or_month_first_format_per_column():
+    dayfirst = pd.Series(["03/04/2021", "25/04/2021", "01/05/2021", "12/12/2021"])
+    parsed, fmt = EdaToolKit.parse_dates(dayfirst)
+    assert fmt == "%d/%m/%Y"
+    assert parsed.iloc[0] == pd.Timestamp("2021-04-03")    # not March 4th
+    monthfirst = pd.Series(["03/04/2021", "04/25/2021", "05/01/2021"])
+    parsed, fmt = EdaToolKit.parse_dates(monthfirst)
+    assert fmt == "%m/%d/%Y" and parsed.iloc[0] == pd.Timestamp("2021-03-04")
+    df = pd.DataFrame({"when": dayfirst.tolist() * 5, "x": range(20)})
+    assert EdaToolKit().date_ranges(df, ["when"])["when"] == {
+        "min": "2021-04-03", "max": "2021-12-12", "format": "%d/%m/%Y"}
