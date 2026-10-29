@@ -8,14 +8,8 @@ import functools
 import math
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
-
-from backend.eda import EdaToolKit
-from backend.ml import MLdiagnosticskit
-from backend.model_arena import ModelArenaKit
-from backend.drift import DriftAnalyzer
-from backend.profiles import get_profile
+# pandas, scikit-learn and LightGBM load inside the tools, so the server
+# answers initialize/list_tools quickly; the first tool call pays the import cost.
 
 SEED = 42
 TOP_N = 5
@@ -30,14 +24,15 @@ def _clean(obj):
         return {str(k): _clean(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_clean(v) for v in obj]
-    if isinstance(obj, np.generic):
+    if type(obj).__module__ == "numpy" and hasattr(obj, "item"):
         obj = obj.item()
     if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
         return None
     return obj
 
 
-def _load(csv_path: str, max_rows: int | None) -> tuple[pd.DataFrame, dict]:
+def _load(csv_path: str, max_rows: int | None) -> tuple["pd.DataFrame", dict]:
+    import pandas as pd
     path = Path(csv_path).expanduser()
     if not path.is_file():
         raise ValueError(f"CSV not found: {csv_path}")
@@ -51,7 +46,7 @@ def _load(csv_path: str, max_rows: int | None) -> tuple[pd.DataFrame, dict]:
     return df, meta
 
 
-def _require_target(df: pd.DataFrame, target_col: str):
+def _require_target(df, target_col: str):
     if target_col not in df.columns:
         raise ValueError(
             f"target_col '{target_col}' not in columns: {list(df.columns)[:50]}"
@@ -72,6 +67,7 @@ def _guard(fn):
 @_guard
 def describe_dataset(csv_path: str, max_rows: int | None = None) -> dict:
     """Columns, types, inferred roles, row count and missing values. Run first to pick a target column."""
+    from backend.eda import EdaToolKit
     df, meta = _load(csv_path, max_rows)
     eda = EdaToolKit()
     basic = eda.basicdatainfo(df)
@@ -104,6 +100,9 @@ def describe_dataset(csv_path: str, max_rows: int | None = None) -> dict:
 @_guard
 def check_leakage(csv_path: str, target_col: str, max_rows: int | None = None) -> dict:
     """Target-leakage check: near-perfect correlations, perfect separators, identifiers, duplicate rows."""
+    from backend.eda import EdaToolKit
+    from backend.ml import MLdiagnosticskit
+    from backend.profiles import get_profile
     df, meta = _load(csv_path, max_rows)
     _require_target(df, target_col)
     cfg = get_profile("standard")
@@ -126,6 +125,10 @@ def check_leakage(csv_path: str, target_col: str, max_rows: int | None = None) -
 @_guard
 def run_baselines(csv_path: str, target_col: str, max_rows: int | None = None, n_folds: int = 3) -> dict:
     """Cross-validated baseline models for the target; returns the top models and the winner."""
+    import pandas as pd
+    from backend.eda import EdaToolKit
+    from backend.model_arena import ModelArenaKit
+    from backend.profiles import get_profile
     df, meta = _load(csv_path, max_rows)
     _require_target(df, target_col)
     cfg = get_profile("standard")
@@ -166,6 +169,7 @@ def run_baselines(csv_path: str, target_col: str, max_rows: int | None = None, n
 @_guard
 def check_drift(reference_csv: str, current_csv: str, max_rows: int | None = None) -> dict:
     """Distribution drift between a reference (e.g. train) and a current (e.g. test/prod) CSV."""
+    from backend.drift import DriftAnalyzer
     ref, ref_meta = _load(reference_csv, max_rows)
     cur, cur_meta = _load(current_csv, max_rows)
     result = DriftAnalyzer().compare(ref, cur)

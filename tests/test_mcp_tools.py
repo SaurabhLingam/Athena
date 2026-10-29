@@ -108,3 +108,12 @@ def test_top_drifted_omits_zero_scores(tmp_path):
     cur.to_csv(tmp_path / "c.csv", index=False)
     out = check_drift(str(tmp_path / "r.csv"), str(tmp_path / "c.csv"))
     assert all(c["drift_score"] > 0 for c in out["top_drifted"])
+
+
+def test_server_module_does_not_import_heavy_libraries():
+    import subprocess
+    import sys
+    code = ("import sys, backend.mcp_server; "
+            "print(sorted(m for m in ('pandas', 'sklearn', 'lightgbm') if m in sys.modules))")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "[]"
