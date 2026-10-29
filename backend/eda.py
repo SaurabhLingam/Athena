@@ -113,8 +113,12 @@ class EdaToolKit:
                 identifiers.append(col)
 
 
-        ID_SEGMENTS = {"id", "key", "code", "num", "no", "number", "postal",
+        ID_SEGMENTS = {"id", "key", "number", "postal",
                        "permit", "fips", "idx", "seq", "ref", "oid"}
+
+        # Ambiguous name parts (education_num, phone_no, zip_code...) only mark an
+        # ID when the column is also nearly unique.
+        WEAK_ID_SEGMENTS = {"num", "no", "code"}
 
         ID_FULLNAMES = {"uuid", "guid", "zipcode", "postcode", "fips", "oid",
                         "uid", "nid", "pid", "rid", "sid", "cid"}
@@ -126,7 +130,9 @@ class EdaToolKit:
             col_lower = col.lower().strip()
             col_parts = set(col_lower.replace("-", "_").replace(" ", "_").split("_"))
 
-            segment_match = bool(col_parts & ID_SEGMENTS)
+            segment_match = bool(col_parts & ID_SEGMENTS) or (
+                bool(col_parts & WEAK_ID_SEGMENTS) and df[col].nunique(dropna=True) / n_rows >= 0.95
+            )
             fullname_match = col_lower in ID_FULLNAMES
             suffix_match = col.endswith(ID_SUFFIXES)
             id_word_match = col_lower == "id" or (

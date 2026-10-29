@@ -70,3 +70,16 @@ def test_strong_real_features_are_not_flagged_but_planted_leak_is():
     flagged = set(_leakage(df)["suspicious_features"])
     assert "leak" in flagged
     assert not flagged & {"worst perimeter", "worst radius", "worst area", "worst concave points", "mean concave points"}
+
+
+def test_weak_id_name_parts_need_near_uniqueness():
+    rng = np.random.default_rng(0)
+    n = 500
+    df = pd.DataFrame({
+        "education_num": rng.integers(1, 17, n),
+        "order_no": rng.permutation(n) + 10_000,
+        "target": rng.integers(0, 2, n),
+    })
+    views = EdaToolKit().build_column_views(df, "target")
+    assert "education_num" not in views["identifiers"]
+    assert "order_no" in views["identifiers"]
