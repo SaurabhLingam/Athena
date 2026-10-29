@@ -135,7 +135,7 @@ Every tool takes an optional `max_rows` to sample large CSVs, and returns compac
 To teach the agent when and in what order to use the tools, install the bundled skill:
 
 ```bash
-mkdir -p ~/.claude/skills && cp -r skills/athena ~/.claude/skills/
+athena install-skill      # copies SKILL.md to ~/.claude/skills/athena/
 ```
 
 Then ask something like *"Is data/churn.csv ready for modelling? Compare it with data/churn_new.csv."*
