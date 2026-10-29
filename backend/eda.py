@@ -124,6 +124,12 @@ class EdaToolKit:
 
 
 
+            # Near-unique long strings with spaces are free text (reviews, notes), not IDs
+            if unique_ratio >= 0.96 and not is_numeric:
+                sample = s.dropna().astype(str).head(100)
+                if sample.str.split().str.len().mean() > 3 and sample.str.len().mean() > 20:
+                    free_text_cols.append(col)
+                    continue
             # Near-unique floats are continuous measurements, not IDs.
             if unique_ratio >= 0.96 and not pd.api.types.is_float_dtype(s):
                 identifiers.append(col)

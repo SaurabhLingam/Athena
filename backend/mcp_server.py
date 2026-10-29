@@ -14,6 +14,7 @@ from pathlib import Path
 SEED = 42
 TOP_N = 5
 MAX_DESCRIBE_COLS = 30
+NEAR_CONSTANT_SHARE = 0.99
 NEAR_PERFECT_R2 = 0.999
 NEAR_PERFECT_BALANCED_ACC = 0.98
 
@@ -110,6 +111,19 @@ def _guard(fn):
     return wrapper
 
 
+def _constant_columns(df) -> dict:
+    """Columns with one value, or >= 99% of rows sharing one value (missing counts as a value)."""
+    constant, near = [], []
+    for col in df.columns:
+        top_share = df[col].value_counts(dropna=False, normalize=True).iloc[0]
+        if df[col].nunique(dropna=False) <= 1:
+            constant.append(str(col))
+        elif top_share >= NEAR_CONSTANT_SHARE:
+            near.append(f"{col} ({top_share:.1%})")
+    return {**({"constant_columns": constant} if constant else {}),
+            **({"near_constant_columns": near} if near else {})}
+
+
 @_guard
 def describe_dataset(csv_path: str, max_rows: int | None = None) -> dict:
     """Columns, types, inferred roles, row count and missing values. Run first to pick a target column."""
@@ -144,6 +158,7 @@ def describe_dataset(csv_path: str, max_rows: int | None = None) -> dict:
         "duplicate_rows": int(df.duplicated().sum()),
         "date_ranges": eda.date_ranges(df, views["datetime_cols"]),
         **({"placeholder_missing": placeholders} if placeholders else {}),
+        **_constant_columns(df),
     }
 
 

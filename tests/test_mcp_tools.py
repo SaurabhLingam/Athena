@@ -169,3 +169,21 @@ def test_placeholders_and_sentinels_count_as_missing(tmp_path):
     cols = {c.split("|")[0]: c.split("|") for c in out["columns"]}
     assert cols["age"][1] == "float64" and cols["age"][2] == "num"   # parsed as numeric once cleaned
     assert float(cols["age"][4]) == 8.0
+
+
+def test_free_text_and_constant_columns(tmp_path):
+    rng = np.random.default_rng(0)
+    n = 300
+    words = ["great", "product", "arrived", "late", "but", "works", "well", "would", "buy", "again"]
+    review = [" ".join(rng.choice(words, 8)) + f" order {i}" for i in range(n)]
+    flag = np.zeros(n, dtype=int)
+    flag[:2] = 1                                   # 99.3% one value
+    df = pd.DataFrame({"review": review, "country": "IN", "flag": flag,
+                       "x": rng.normal(size=n), "user_key": [f"u{i:05d}" for i in range(n)]})
+    df.to_csv(tmp_path / "text.csv", index=False)
+    out = describe_dataset(str(tmp_path / "text.csv"))
+    roles = {c.split("|")[0]: c.split("|")[2] for c in out["columns"]}
+    assert roles["review"] == "text"
+    assert roles["user_key"] == "id"
+    assert out["constant_columns"] == ["country"]
+    assert out["near_constant_columns"] == ["flag (99.3%)"]
