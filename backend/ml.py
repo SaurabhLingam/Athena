@@ -510,19 +510,24 @@ class MLdiagnosticskit:
             # are ordinary overlap and are reported as information.
             row_dup_frac = df.duplicated().mean()
             feature_dup_frac = df.drop(columns=[target_col]).duplicated().mean()
-            if row_dup_frac > 0.20:
-                leakage_score += 25
-                self.add_penalty(
-                    "Leakage Checks",
-                    f"{row_dup_frac:.1%} exact duplicate rows (features + target), high risk of train/test leakage. Deduplicate before splitting"
-                )
-            elif row_dup_frac > 0.10:
+            if row_dup_frac > 0.05:
                 leakage_score += 10
                 self.add_penalty(
                     "Leakage Checks",
-                    f"{row_dup_frac:.1%} exact duplicate rows (features + target), possible train/test leakage"
+                    f"{row_dup_frac:.1%} exact duplicate rows (features + target), likely train/test leakage. Deduplicate before splitting"
                 )
-            elif feature_dup_frac > 0.10:
+            elif row_dup_frac >= 0.01:
+                leakage_score += 5
+                self.add_penalty(
+                    "Leakage Checks",
+                    f"{row_dup_frac:.1%} exact duplicate rows (features + target), minor train/test leakage risk"
+                )
+            elif row_dup_frac > 0:
+                self.add_recommendation(
+                    "Leakage Checks",
+                    f"{row_dup_frac:.2%} exact duplicate rows (features + target). Too few to matter, but consider deduplicating"
+                )
+            if feature_dup_frac > 0.10 and row_dup_frac == 0:
                 self.add_recommendation(
                     "Leakage Checks",
                     f"{feature_dup_frac:.1%} rows share their features with another row but have a different "

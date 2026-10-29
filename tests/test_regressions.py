@@ -207,7 +207,7 @@ def test_only_exact_duplicate_rows_count_as_leakage():
     # Exact copies of whole records are scored
     rich = pd.DataFrame({"a": rng.normal(size=500), "b": rng.normal(size=500),
                          "target": rng.integers(0, 2, 500)})
-    assert _leakage(pd.concat([rich] * 2, ignore_index=True))["leakage_score"] >= 25
+    assert _leakage(pd.concat([rich] * 2, ignore_index=True))["leakage_score"] == 10
 
 
 def test_dates_use_one_day_first_or_month_first_format_per_column():
@@ -267,3 +267,22 @@ def test_baselines_use_the_same_roles_as_describe_dataset():
     _, _, num_cols, cat_cols = ModelArenaKit()._prepare(df, views, "target", "classification")
     assert set(num_cols) == {"hours", "price"} == set(views["numeric_features"])
     assert set(cat_cols) == {"weekday", "store_code"} == set(views["categorical_features"])
+
+
+def test_duplicate_row_severity_scales_with_share():
+    rng = np.random.default_rng(0)
+    base = pd.DataFrame({"a": rng.normal(size=1000), "b": rng.normal(size=1000),
+                         "target": rng.integers(0, 2, 1000)})
+
+    def run(n_copies):
+        df = pd.concat([base, base.iloc[:n_copies]], ignore_index=True)
+        report = MLdiagnosticskit()
+        eda = EdaToolKit()
+        out = report.run_leakage_checks(df, eda.feature_correlation(df, "target"),
+                                        eda.build_column_views(df, "target"), "target")
+        return out["leakage_score"], report
+
+    score, report = run(5)                 # 0.5%: information only
+    assert score == 0 and any("Too few to matter" in r for r in report.recommendation_buckets["Leakage Checks"])
+    assert run(30)[0] == 5                 # ~2.9%: low
+    assert run(100)[0] == 10               # ~9.1%: medium
