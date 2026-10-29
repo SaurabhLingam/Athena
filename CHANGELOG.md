@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased (fix/benchmark-gaps)
+
+### Added
+- `describe_dataset` reports placeholder missing values per column (`placeholder_missing`: `?`, `-`, `--`, NA-like tokens, blank strings, and the sentinels -999 / -9999 / 999999 when far outside a column's real values). All tools now treat these as missing.
+- `describe_dataset` flags `constant_columns`, `near_constant_columns` (>= 99% one value) and `redundant_pairs` (one-to-one categorical pairs, numeric pairs with |corr| >= 0.999). An optional `target_col` adds the target's class balance, or a value summary for regression targets.
+- Leakage check: every feature gets a cross-validated single-feature score (a per-value or per-bin lookup model). Features reaching balanced accuracy or R^2 >= 0.98 on their own are flagged, which catches post-outcome columns and coded copies of multiclass targets.
+
+### Changed
+- Integer columns are numeric unless they have <= 10 distinct values or a code-like name (`zip`, `tract`, `fips`, `district`, or the words `code` / `id`). Replaces the entity-key and "p5 > 100" rules.
+- Duplicate feature rows are only scored as leakage when the features have enough distinct combinations that repeats are unlikely by chance. Otherwise they're reported as information.
+- Dates are parsed with one format per column (ISO, then month-first, then day-first; the first that parses every value). `date_ranges` reports the chosen `format`.
+- Near-unique long strings with spaces are labelled free text, not identifiers.
+
 ## 0.3.0 — 2026-10-29
 
 ### Added
