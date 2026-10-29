@@ -370,3 +370,17 @@ def test_target_insights_uses_class_balance():
     df = pd.DataFrame({"x": range(200), "y": ["a"] * 194 + ["b"] * 6})
     ti = EdaToolKit().target_insights(df, "y")
     assert ti["class_balance"]["level"] == "severe" and ti["is_imbalanced"]
+
+
+def test_two_digit_year_dates_are_parsed_and_flagged_when_ambiguous():
+    ambiguous = pd.Series(["03-07-24", "11-05-23", "01-12-22", "12-01-21"] * 30)
+    clear = pd.Series(["03-27-24", "11-05-23", "01-12-22", "12-31-21"] * 30)  # day > 12: month first
+    dotted = pd.Series(["27.03.24", "05.11.23", "31.12.21"] * 40)
+    df = pd.DataFrame({"a": ambiguous, "c": clear, "d": dotted, "x": range(120)})
+    views = EdaToolKit().build_column_views(df)
+    assert set(views["datetime_cols"]) == {"a", "c", "d"}
+    ranges = EdaToolKit.date_ranges(df, ["a", "c", "d"])
+    assert ranges["a"]["format"] == "ambiguous"
+    assert ranges["a"]["month_first"] == {"min": "2021-12-01", "max": "2024-03-07"}
+    assert ranges["c"] == {"min": "2021-12-31", "max": "2024-03-27", "format": "%m-%d-%y"}
+    assert ranges["d"]["format"] == "%d.%m.%y" and ranges["d"]["max"] == "2024-03-27"

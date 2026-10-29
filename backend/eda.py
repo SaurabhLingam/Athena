@@ -14,7 +14,9 @@ def looks_like_code_name(col) -> bool:
 
 
 _DATE_PARTS = ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%d/%m/%Y", "%m-%d-%Y", "%d-%m-%Y",
-               "%d.%m.%Y", "%m/%d/%y", "%d/%m/%y")
+               "%d.%m.%Y",
+               # Two-digit years, after the four-digit forms so 2024 is never read as 20
+               "%m/%d/%y", "%d/%m/%y", "%m-%d-%y", "%d-%m-%y", "%m.%d.%y", "%d.%m.%y")
 _TIME_PARTS = ("", " %H:%M", " %H:%M:%S", "T%H:%M:%S", " %H.%M.%S")
 DATE_FORMATS = [d + t for d in _DATE_PARTS for t in _TIME_PARTS]
 
