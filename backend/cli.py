@@ -268,6 +268,27 @@ def version():
     console.print(f"\n  [cyan]athena-eda[/cyan] [bold white]{v}[/bold white]\n")
 
 @app.command()
+def mcp():
+    """Start the Athena [bold cyan]MCP server[/bold cyan] (stdio) for AI agents."""
+    from backend.mcp_server import main as _mcp_main
+    _mcp_main()
+
+@app.command("install-skill")
+def install_skill(
+    dest: Path = typer.Option(
+        Path.home() / ".claude" / "skills",
+        help="Claude Code skills folder to install into.",
+    ),
+):
+    """Install the Athena [bold cyan]Claude Code skill[/bold cyan] (pairs with `athena mcp`)."""
+    from importlib.resources import files
+    src = files("backend") / "skills" / "athena" / "SKILL.md"
+    target = Path(dest).expanduser() / "athena" / "SKILL.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    console.print(f"\n  [green]✓[/green] Skill installed to [cyan]{target}[/cyan]\n")
+
+@app.command()
 def update():
     """Update Athena to the [bold cyan]latest version[/bold cyan]."""
     import subprocess

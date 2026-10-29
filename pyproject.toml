@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "athena-eda"
-version = "0.2.2"
+version = "0.3.0"
 description = "Automated EDA, ML readiness scoring, and data quality checks — locally in your browser."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -37,19 +37,24 @@ all = [
     "pmdarima>=2.0.0",
 ]
 
+mcp = [
+    "mcp>=1.2.0",
+]
+
 [project.urls]
 Homepage = "https://athena-alpha-hazel.vercel.app"
 Repository = "https://github.com/SaurabhLingam/Athena"
 
 [project.scripts]
 athena = "backend.cli:app"
+athena-mcp = "backend.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["backend*"]
 
 [tool.setuptools.package-data]
-backend = ["static/**/*", "static/*"]
+backend = ["static/**/*", "static/*", "skills/**/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

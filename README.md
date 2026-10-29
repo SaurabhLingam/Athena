@@ -114,6 +114,32 @@ athena version              # installed version
 athena update               # upgrade to the latest release
 ```
 
+## Using Athena from AI agents (MCP)
+
+Athena ships an [MCP](https://modelcontextprotocol.io) server so agents like Claude Code can run its checks on a CSV directly.
+
+```bash
+pip install "athena-eda[mcp]"
+claude mcp add athena -- athena-mcp      # or: athena mcp
+```
+
+| Tool | Input | Returns |
+|---|---|---|
+| `describe_dataset` | `csv_path` | Columns, dtypes, inferred roles, missing %, row count |
+| `check_leakage` | `csv_path`, `target_col` | Leakage score, risk level, suspicious features |
+| `run_baselines` | `csv_path`, `target_col` | Task type, CV metric, top models, winner |
+| `check_drift` | `reference_csv`, `current_csv` | Overall drift score, top drifted columns, new categories |
+
+Every tool takes an optional `max_rows` to sample large CSVs, and returns compact JSON (or `{"error": ...}`).
+
+To teach the agent when and in what order to use the tools, install the bundled skill:
+
+```bash
+athena install-skill      # copies SKILL.md to ~/.claude/skills/athena/
+```
+
+Then ask something like *"Is data/churn.csv ready for modelling? Compare it with data/churn_new.csv."*
+
 ## Limits
 
 - CSV files only, up to 100 MB

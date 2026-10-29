@@ -1,6 +1,36 @@
 import re
+import warnings
 import pandas as pd
 import numpy as np
+CODE_NAME_HINTS = ("tract", "district", "fips", "zip")   # matched anywhere in the name
+CODE_NAME_WORDS = {"code", "id"}                          # matched as whole words
+INTEGER_CATEGORICAL_MAX_UNIQUE = 10
+
+
+def looks_like_code_name(col) -> bool:
+    name = str(col).lower()
+    words = set(re.split(r"[^a-z0-9]+", name))
+    return any(h in name for h in CODE_NAME_HINTS) or bool(words & CODE_NAME_WORDS)
+
+
+_DATE_PARTS = ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%d/%m/%Y", "%m-%d-%Y", "%d-%m-%Y",
+               "%d.%m.%Y", "%m/%d/%y", "%d/%m/%y")
+_TIME_PARTS = ("", " %H:%M", " %H:%M:%S", "T%H:%M:%S", " %H.%M.%S")
+DATE_FORMATS = [d + t for d in _DATE_PARTS for t in _TIME_PARTS]
+
+
+def _swap_day_month(fmt: str):
+    """%m/%d/%Y <-> %d/%m/%Y; None for formats without a day/month order question (ISO, mixed)."""
+    if fmt.startswith("%m") or fmt.startswith("%d"):
+        return fmt.replace("%m", "@M@").replace("%d", "%m").replace("@M@", "%d")
+    return None
+
+
+def _range(d: pd.Series) -> dict:
+    return {"min": str(d.min().date()) if d.notna().any() else None,
+            "max": str(d.max().date()) if d.notna().any() else None}
+
+
 class EdaToolKit:
     def __init__(self, cfg: dict = None):
         try:
@@ -30,6 +60,63 @@ class EdaToolKit:
             return float(x)
         return x
     
+    @staticmethod
+    def parse_dates(s: pd.Series):
+        """Parse a column with one format for every value, so 03/04 can't mean March
+        in one row and April in the next. Tries ISO, then month-first, then day-first,
+        and falls back to per-value parsing only if no single format fits.
+        Returns (parsed series, format or "mixed")."""
+        values = s.dropna().astype(str).str.strip()
+        uniques = pd.Series(values.unique())
+        for fmt in DATE_FORMATS:
+            try:
+                pd.to_datetime(uniques, format=fmt, errors="raise")
+            except (ValueError, TypeError):
+                continue
+            return pd.to_datetime(s.astype(str).str.strip().where(s.notna()), format=fmt, errors="coerce"), fmt
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return pd.to_datetime(s, errors="coerce", format="mixed"), "mixed"
+
+    @staticmethod
+    def _parses_all(s: pd.Series, fmt: str) -> bool:
+        try:
+            pd.to_datetime(pd.Series(s.dropna().astype(str).str.strip().unique()), format=fmt, errors="raise")
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    @staticmethod
+    def is_datetime_like(s: pd.Series, sample_size: int = 200) -> bool:
+        """Datetime dtype, or strings where >=90% of a sample parse as dates."""
+        if pd.api.types.is_datetime64_any_dtype(s):
+            return True
+        if not (pd.api.types.is_object_dtype(s) or pd.api.types.is_string_dtype(s)):
+            return False
+        sample = s.dropna().astype(str).head(sample_size)
+        # Needs a date separator, so plain numbers and codes are never parsed as dates
+        if sample.empty or not sample.str.contains(r"\d[-/.]\d|\d{4}-\d", regex=True).mean() >= 0.9:
+            return False
+        parsed, _ = EdaToolKit.parse_dates(sample)
+        return parsed.notna().mean() >= 0.9
+
+    @staticmethod
+    def date_ranges(df: pd.DataFrame, cols: list) -> dict:
+        out = {}
+        for col in cols:
+            d, fmt = EdaToolKit.parse_dates(df[col])
+            swapped = _swap_day_month(fmt)
+            if swapped and EdaToolKit._parses_all(df[col], swapped):
+                # Every value fits both orders (all days <= 12): don't guess
+                alt = pd.to_datetime(df[col].astype(str).str.strip().where(df[col].notna()),
+                                     format=swapped, errors="coerce")
+                month_first, day_first = (d, alt) if fmt.startswith("%m") else (alt, d)
+                out[col] = {"format": "ambiguous",
+                            "month_first": _range(month_first), "day_first": _range(day_first)}
+            else:
+                out[col] = {**_range(d), "format": fmt}
+        return out
+
     def build_column_views(self, df: pd.DataFrame, target_col: str | None = None):
         target = [target_col] if target_col and target_col in df.columns else []
 
@@ -38,36 +125,50 @@ class EdaToolKit:
         categorical_features = []
         entity_keys = []
         free_text_cols = []
+        datetime_cols = []
 
         n_rows = len(df)
         for col in df.columns:
             if col in target:
+                continue
+            if self.is_datetime_like(df[col]):
+                datetime_cols.append(col)
+                continue
+            # Codes are labels even when stored as numbers (2020 Census Tract, zip, store_id)
+            if looks_like_code_name(col):
+                if df[col].nunique(dropna=True) / n_rows >= 0.95:
+                    identifiers.append(col)
+                else:
+                    categorical_features.append(col)
                 continue
 
             s = df[col]
             n_unique = s.nunique(dropna=True)
             unique_ratio = n_unique / n_rows
             is_numeric = pd.api.types.is_numeric_dtype(s)
-            is_integer = is_numeric and (s.dropna() % 1 == 0).all()
+            # Decided by dtype: whole-number floats (Population, seconds) are measurements.
+            is_integer = pd.api.types.is_integer_dtype(s)
 
 
 
-            if unique_ratio >= 0.96:
+            # Near-unique long strings with spaces are free text (reviews, notes), not IDs
+            if unique_ratio >= 0.96 and not is_numeric:
+                sample = s.dropna().astype(str).head(100)
+                if sample.str.split().str.len().mean() > 3 and sample.str.len().mean() > 20:
+                    free_text_cols.append(col)
+                    continue
+            # Near-unique floats are continuous measurements, not IDs.
+            if unique_ratio >= 0.96 and not pd.api.types.is_float_dtype(s):
                 identifiers.append(col)
                 
                 continue
-            if is_numeric and is_integer and unique_ratio > 0.5:
-                entity_keys.append(col)
-                
-                continue
-            if is_numeric and is_integer:
-                non_zero = s.dropna()
-                non_zero = non_zero[non_zero != 0]
-                p5 = float(non_zero.quantile(0.05)) if len(non_zero) > 0 else 0
-                if p5 > 100 and n_unique > 50:
+            # Integers are counts/measurements unless they only take a handful of values
+            if is_integer:
+                if n_unique <= INTEGER_CATEGORICAL_MAX_UNIQUE:
                     categorical_features.append(col)
-                    
-                    continue
+                else:
+                    numeric_features.append(col)
+                continue
 
             if not is_numeric and 0.02 < unique_ratio < 0.95:
                 sample = s.dropna().astype(str).head(100)
@@ -93,15 +194,6 @@ class EdaToolKit:
                 categorical_features.append(col)
                 continue
 
-            if is_integer and n_unique <= 30:
-                sample_vals = set(s.dropna().unique())
-                already_encoded = sample_vals.issubset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
-                if already_encoded:
-                    numeric_features.append(col)
-                else:
-                    categorical_features.append(col)
-                continue
-
             numeric_features.append(col)
 
         for col in free_text_cols[:]:
@@ -112,8 +204,12 @@ class EdaToolKit:
                 identifiers.append(col)
 
 
-        ID_SEGMENTS = {"id", "key", "code", "num", "no", "number", "postal",
+        ID_SEGMENTS = {"id", "key", "number", "postal",
                        "permit", "fips", "idx", "seq", "ref", "oid"}
+
+        # Ambiguous name parts (education_num, phone_no, zip_code...) only mark an
+        # ID when the column is also nearly unique.
+        WEAK_ID_SEGMENTS = {"num", "no", "code"}
 
         ID_FULLNAMES = {"uuid", "guid", "zipcode", "postcode", "fips", "oid",
                         "uid", "nid", "pid", "rid", "sid", "cid"}
@@ -125,7 +221,9 @@ class EdaToolKit:
             col_lower = col.lower().strip()
             col_parts = set(col_lower.replace("-", "_").replace(" ", "_").split("_"))
 
-            segment_match = bool(col_parts & ID_SEGMENTS)
+            segment_match = bool(col_parts & ID_SEGMENTS) or (
+                bool(col_parts & WEAK_ID_SEGMENTS) and df[col].nunique(dropna=True) / n_rows >= 0.95
+            )
             fullname_match = col_lower in ID_FULLNAMES
             suffix_match = col.endswith(ID_SUFFIXES)
             id_word_match = col_lower == "id" or (
@@ -148,7 +246,8 @@ class EdaToolKit:
             "entity_keys": entity_keys,
             "numeric_features": numeric_features,
             "categorical_features": categorical_features,
-            "free_text_cols": free_text_cols
+            "free_text_cols": free_text_cols,
+            "datetime_cols": datetime_cols
 
         }
     

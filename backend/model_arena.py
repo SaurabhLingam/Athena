@@ -138,7 +138,10 @@ class ModelArenaKit:
         X = data[feature_cols].copy()
         y_raw = data[target_col]
 
-        num_cols = [c for c in feature_cols if pd.api.types.is_numeric_dtype(X[c])]
+        # Use the roles from build_column_views (shared with describe_dataset), not dtype:
+        # integer codes such as weekday or zipcode are categorical even though they're numbers.
+        numeric_role = set(col_views.get("numeric_features", []))
+        num_cols = [c for c in feature_cols if c in numeric_role and pd.api.types.is_numeric_dtype(X[c])]
         cat_cols = [c for c in feature_cols if c not in num_cols]
 
         X[num_cols] = X[num_cols].astype(float)
@@ -200,11 +203,11 @@ class ModelArenaKit:
     def _classification_models(self):
         return [
             ("Logistic Regression", LogisticRegression(
-                max_iter=1000, random_state=SEED, solver="lbfgs"
+                max_iter=1000, random_state=SEED, solver="lbfgs", class_weight="balanced"
             ), True),
             ("Random Forest", RandomForestClassifier(
                 n_estimators=100, random_state=SEED, n_jobs=1,
-                max_depth=8, min_samples_leaf=2
+                max_depth=8, min_samples_leaf=2, class_weight="balanced"
             ), False),
         ]
 
@@ -278,7 +281,8 @@ class ModelArenaKit:
                 X_val = pre.transform(X.iloc[val_idx])
                 y_train, y_val = y[train_idx], y[val_idx]
 
-                model, _ = fit_lgb_early_stopped(X_train, y_train, params, task_type, seed=SEED + fold_i)
+                model, _ = fit_lgb_early_stopped(X_train, y_train, params, task_type, seed=SEED + fold_i,
+                                                 balanced=True)
                 y_pred = predict_labels(model, X_val, task_type)
 
                 fold_scores.append(float(metric_fn(y_val, y_pred)))

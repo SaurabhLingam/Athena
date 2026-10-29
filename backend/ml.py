@@ -8,12 +8,13 @@ import numpy as np
 from typing import Dict, Optional
 
 from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
-from sklearn.metrics import balanced_accuracy_score, r2_score
+from sklearn.metrics import balanced_accuracy_score, r2_score, roc_auc_score
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
+from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.metrics import calinski_harabasz_score
 
@@ -23,6 +24,19 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 SEED = 42
+
+
+LEAKAGE_CORR_THRESHOLD = 0.95
+# Single-feature AUC reaches 0.95 far more easily than |correlation| does,
+# so strong-but-honest predictors need a stricter cut-off.
+LEAKAGE_AUC_THRESHOLD = 0.995
+# Cross-validated score of a one-feature lookup model. Classification: the strongest honest
+# feature measured scores 0.899 (breast cancer worst concave points) and a column agreeing with
+# a 3-class target 98% of the time scores 0.965-0.987, so 0.93 leaves ~0.03 either side.
+# Regression: honest features peak at 0.70 R^2 (EV Model Year).
+SINGLE_FEATURE_LEAK_THRESHOLD = {"balanced_accuracy": 0.93, "R^2": 0.98}
+# At or above this a flagged column is "likely" leakage; below it, "possible".
+SINGLE_FEATURE_LIKELY_LEAK = 0.95
 
 
 def lgb_params(task_type: str, n_classes: int = 2) -> dict:
@@ -45,11 +59,12 @@ def lgb_params(task_type: str, n_classes: int = 2) -> dict:
 
 
 def fit_lgb_early_stopped(X_train, y_train, params: dict, task_type: str, seed: int = SEED,
-                          es_fraction: float = 0.15):
+                          es_fraction: float = 0.15, balanced: bool = False):
     """
     Train LightGBM with early stopping on a holdout carved out of the training
     data, so the caller's validation fold stays untouched for scoring.
     Returns (model, evals_result) with curves under "train" and "es".
+    balanced=True weights classes inversely to their frequency (class_weight="balanced").
     """
     stratify = y_train if task_type == "classification" else None
     try:
@@ -63,8 +78,12 @@ def fit_lgb_early_stopped(X_train, y_train, params: dict, task_type: str, seed: 
         )
 
     evals_result = {}
-    fit_data = lgb.Dataset(X_fit, y_fit)
-    es_data = lgb.Dataset(X_es, y_es, reference=fit_data)
+    weight = es_weight = None
+    if balanced and task_type == "classification":
+        weight = compute_sample_weight("balanced", y_fit)
+        es_weight = compute_sample_weight("balanced", y_es)
+    fit_data = lgb.Dataset(X_fit, y_fit, weight=weight)
+    es_data = lgb.Dataset(X_es, y_es, weight=es_weight, reference=fit_data)
     model = lgb.train(
         params,
         fit_data,
@@ -307,7 +326,7 @@ class MLdiagnosticskit:
                     "component_scores": self.component_scores
                 }
 
-        if leakage_report["leakage_score"] > 90:
+        if leakage_report["leakage_score"] >= 90:
 
 
             return {
@@ -356,13 +375,86 @@ class MLdiagnosticskit:
         }
 
 
+    @staticmethod
+    def _numeric_target_strength(feature: pd.Series, target: pd.Series):
+        """Returns (strength, threshold): |Pearson| for regression targets,
+        single-feature AUC (mean one-vs-rest) for classification."""
+        pair = pd.DataFrame({"x": feature, "y": target}).dropna()
+        if len(pair) < 10 or pair["x"].nunique() < 2:
+            return None
+        y_numeric = pd.to_numeric(pair["y"], errors="coerce")
+        if y_numeric.notna().all() and y_numeric.nunique() > 10:
+            r = pair["x"].corr(y_numeric)
+            return None if pd.isna(r) else (abs(float(r)), LEAKAGE_CORR_THRESHOLD)
+        classes = pair["y"].unique()
+        if len(classes) < 2:
+            return None
+        if len(classes) == 2:
+            classes = classes[:1]
+        aucs = []
+        for cls in classes:
+            auc = roc_auc_score(pair["y"] == cls, pair["x"])
+            aucs.append(max(auc, 1 - auc))
+        return float(np.mean(aucs)), LEAKAGE_AUC_THRESHOLD
+
+    @staticmethod
+    def _single_feature_score(feature: pd.Series, target: pd.Series, n_folds: int = 3):
+        """Cross-validated score of a lookup model on one feature: each value (or quantile
+        bin, for continuous columns) predicts the training folds' majority class or mean.
+        Returns (metric_name, score) or None."""
+        pair = pd.DataFrame({"x": feature, "y": target}).dropna(subset=["y"])
+        if len(pair) < 30 or pair["x"].nunique() < 2:
+            return None
+        y_numeric = pd.to_numeric(pair["y"], errors="coerce")
+        is_regression = bool(y_numeric.notna().all() and y_numeric.nunique() > 10)
+        x = pair["x"]
+        n_bins = 50 if is_regression else 20
+        if pd.api.types.is_numeric_dtype(x) and x.nunique() > 20:
+            # Heavily repeated values (e.g. a block of zeros) get their own bin; qcut would
+            # otherwise drop their duplicate edges and merge them into the neighbouring bin.
+            shares = x.value_counts(normalize=True)
+            heavy = shares[shares >= 1 / n_bins].index
+            rest = ~x.isin(heavy) & x.notna()
+            binned = x.astype(str)
+            if rest.sum() > 0 and x[rest].nunique() > 1:
+                binned[rest] = pd.qcut(x[rest], q=n_bins, duplicates="drop").astype(str)
+            x = binned
+        keys = x.astype(str).to_numpy()  # NaN becomes its own "nan" bin
+        y = (y_numeric if is_regression else pair["y"].astype(str)).to_numpy()
+        kf = KFold(n_splits=n_folds, shuffle=True, random_state=SEED)
+        preds = np.empty(len(y), dtype=object if not is_regression else float)
+        for tr, te in kf.split(keys):
+            train = pd.DataFrame({"k": keys[tr], "y": y[tr]})
+            if is_regression:
+                mapping, fallback = train.groupby("k")["y"].mean(), float(np.mean(y[tr]))
+            else:
+                mapping = train.groupby("k")["y"].agg(lambda v: v.value_counts().idxmax())
+                fallback = pd.Series(y[tr]).value_counts().idxmax()
+            preds[te] = pd.Series(keys[te]).map(mapping).fillna(fallback).to_numpy()
+        if is_regression:
+            return "R^2", float(r2_score(y, preds.astype(float)))
+        return "balanced_accuracy", float(balanced_accuracy_score(y, preds.astype(str)))
+
     def run_leakage_checks(self, df: pd.DataFrame, feature_correlation: Dict, col_views: Dict, target_col: str):
         leakage_score = 0
         suspicious = []
 
         num_corr = feature_correlation.get("numeric_target_correlation", {})
         for col, vals in num_corr.items():
-            if abs(vals.get("pearson", 0)) > 0.95:
+            if abs(vals.get("pearson", 0)) > LEAKAGE_CORR_THRESHOLD:
+                leakage_score += 40
+                suspicious.append(col)
+                self.add_penalty("Leakage Checks", f"Severe leakage risk: {col} is highly correlated with target")
+
+        # Low-cardinality numeric features are routed to categorical_features,
+        # where the distribution-shift check can hide a near-copy of the target.
+        numeric_candidates = [
+            c for c in col_views.get("categorical_features", [])
+            if c not in suspicious and c in df.columns and pd.api.types.is_numeric_dtype(df[c])
+        ]
+        for col in numeric_candidates:
+            scored = self._numeric_target_strength(df[col], df[target_col])
+            if scored is not None and scored[0] > scored[1]:
                 leakage_score += 40
                 suspicious.append(col)
                 self.add_penalty("Leakage Checks", f"Severe leakage risk: {col} is highly correlated with target")
@@ -380,7 +472,28 @@ class MLdiagnosticskit:
             elif shift > 0.95:
                 
                 if col:
-                    self.add_recommendation("Leakage Checks", f"Review {col} — very high target separation (shift={shift:.3f}), verify it's not derived from target")
+                    self.add_recommendation("Leakage Checks", f"Review {col}: very high target separation (shift={shift:.3f}), verify it's not derived from target")
+
+        # A single feature that nearly predicts the target on its own: post-outcome
+        # columns, coded copies of (multiclass) targets, near-duplicates of the target.
+        for col in col_views.get("numeric_features", []) + col_views.get("categorical_features", []):
+            if col in suspicious or col not in df.columns:
+                continue
+            scored = self._single_feature_score(df[col], df[target_col])
+            if scored is None or scored[1] < SINGLE_FEATURE_LEAK_THRESHOLD[scored[0]]:
+                continue
+            suspicious.append(col)
+            detail = f"(single-feature CV {scored[0]} {scored[1]:.3f})"
+            if scored[1] >= SINGLE_FEATURE_LIKELY_LEAK:
+                leakage_score += 40
+                self.add_penalty("Leakage Checks",
+                                 f"Likely leakage: {col} alone predicts the target {detail}. "
+                                 "Check whether it's available at prediction time.")
+            else:
+                leakage_score += 10
+                self.add_penalty("Leakage Checks",
+                                 f"Possible leakage, or a very strong genuine predictor: {col} {detail}. "
+                                 "Verify before using.")
 
         id_cols = col_views.get("identifiers", [])
         if id_cols:
@@ -392,18 +505,33 @@ class MLdiagnosticskit:
             )
 
         try:
-            dup_frac = df.drop(columns=[target_col]).duplicated().mean()
-            if dup_frac > 0.20:
-                leakage_score += 25
-                self.add_penalty(
-                    "Leakage Checks",
-                    f"{dup_frac:.1%} duplicate feature rows detected, high risk of train/test leakage. Deduplicate before splitting"
-                )
-            elif dup_frac > 0.10:
+            # Only exact duplicate rows (features + target) are leakage: copies of one record
+            # can land in both train and test. Rows that share features but differ in target
+            # are ordinary overlap and are reported as information.
+            row_dup_frac = df.duplicated().mean()
+            feature_dup_frac = df.drop(columns=[target_col]).duplicated().mean()
+            if row_dup_frac > 0.05:
                 leakage_score += 10
                 self.add_penalty(
                     "Leakage Checks",
-                    f"{dup_frac:.1%} duplicate feature rows detected, possible train/test leakage"
+                    f"{row_dup_frac:.1%} exact duplicate rows (features + target), likely train/test leakage. Deduplicate before splitting"
+                )
+            elif row_dup_frac >= 0.01:
+                leakage_score += 5
+                self.add_penalty(
+                    "Leakage Checks",
+                    f"{row_dup_frac:.1%} exact duplicate rows (features + target), minor train/test leakage risk"
+                )
+            elif row_dup_frac > 0:
+                self.add_recommendation(
+                    "Leakage Checks",
+                    f"{row_dup_frac:.2%} exact duplicate rows (features + target). Too few to matter, but consider deduplicating"
+                )
+            if feature_dup_frac > 0.10 and row_dup_frac == 0:
+                self.add_recommendation(
+                    "Leakage Checks",
+                    f"{feature_dup_frac:.1%} rows share their features with another row but have a different "
+                    "target. Not counted as leakage"
                 )
         except Exception as e:
             self.add_recommendation("Leakage Checks", f"Duplicate-row check could not run: {e}")
