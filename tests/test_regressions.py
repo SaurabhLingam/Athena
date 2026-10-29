@@ -384,3 +384,20 @@ def test_two_digit_year_dates_are_parsed_and_flagged_when_ambiguous():
     assert ranges["a"]["month_first"] == {"min": "2021-12-01", "max": "2024-03-07"}
     assert ranges["c"] == {"min": "2021-12-31", "max": "2024-03-27", "format": "%m-%d-%y"}
     assert ranges["d"]["format"] == "%d.%m.%y" and ranges["d"]["max"] == "2024-03-27"
+
+
+def test_id_like_names_need_near_unique_values():
+    rng = np.random.default_rng(0)
+    n = 3000
+    df = pd.DataFrame({
+        "shop_id": rng.integers(1, 46, n),               # 45 values: a code, not an ID
+        "postal_area": rng.integers(10_000, 10_800, n),  # ~800 values
+        "record_id": rng.permutation(n),                 # unique: an ID
+        "branch_ref": rng.choice([f"B{i}" for i in range(30)], n),
+        "x": rng.normal(size=n),
+        "target": rng.integers(0, 2, n),
+    })
+    views = EdaToolKit().build_column_views(df, "target")
+    assert views["identifiers"] == ["record_id"]
+    for col in ("shop_id", "postal_area", "branch_ref"):
+        assert col in views["categorical_features"], col

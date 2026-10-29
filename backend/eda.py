@@ -5,6 +5,8 @@ import numpy as np
 CODE_NAME_HINTS = ("tract", "district", "fips", "zip")   # matched anywhere in the name
 CODE_NAME_WORDS = {"code", "id"}                          # matched as whole words
 INTEGER_CATEGORICAL_MAX_UNIQUE = 10
+# An identifier must be close to unique; an ID-like name alone isn't enough
+ID_MIN_UNIQUE_RATIO = 0.95
 
 
 def looks_like_code_name(col) -> bool:
@@ -174,7 +176,7 @@ class EdaToolKit:
                 continue
             # Codes are labels even when stored as numbers (2020 Census Tract, zip, store_id)
             if looks_like_code_name(col):
-                if df[col].nunique(dropna=True) / n_rows >= 0.95:
+                if df[col].nunique(dropna=True) / n_rows >= ID_MIN_UNIQUE_RATIO:
                     identifiers.append(col)
                 else:
                     categorical_features.append(col)
@@ -245,8 +247,9 @@ class EdaToolKit:
         ID_SEGMENTS = {"id", "key", "number", "postal",
                        "permit", "fips", "idx", "seq", "ref", "oid"}
 
-        # Ambiguous name parts (education_num, phone_no, zip_code...) only mark an
-        # ID when the column is also nearly unique.
+        # Ambiguous name parts (education_num, phone_no, zip_code...) are ID-like names too.
+        # Any ID-like name marks an identifier only when the column is nearly unique;
+        # otherwise it's a code (store_id, postal code) and is treated as categorical.
         WEAK_ID_SEGMENTS = {"num", "no", "code"}
 
         ID_FULLNAMES = {"uuid", "guid", "zipcode", "postcode", "fips", "oid",
@@ -255,13 +258,12 @@ class EdaToolKit:
         ID_SUFFIXES = ("_id", "_Id", "_ID", "_idx", "_Idx", "_cd", "_Cd")
 
         reclassify_as_identifier = []
+        reclassify_as_categorical = []
         for col in categorical_features + numeric_features:
             col_lower = col.lower().strip()
             col_parts = set(col_lower.replace("-", "_").replace(" ", "_").split("_"))
 
-            segment_match = bool(col_parts & ID_SEGMENTS) or (
-                bool(col_parts & WEAK_ID_SEGMENTS) and df[col].nunique(dropna=True) / n_rows >= 0.95
-            )
+            segment_match = bool(col_parts & (ID_SEGMENTS | WEAK_ID_SEGMENTS))
             fullname_match = col_lower in ID_FULLNAMES
             suffix_match = col.endswith(ID_SUFFIXES)
             id_word_match = col_lower == "id" or (
@@ -269,7 +271,10 @@ class EdaToolKit:
             )
 
             if segment_match or fullname_match or suffix_match or id_word_match:
-                reclassify_as_identifier.append(col)
+                if df[col].nunique(dropna=True) / n_rows >= ID_MIN_UNIQUE_RATIO:
+                    reclassify_as_identifier.append(col)
+                elif col in numeric_features and pd.api.types.is_integer_dtype(df[col]):
+                    reclassify_as_categorical.append(col)
 
         for col in reclassify_as_identifier:
             if col in categorical_features:
@@ -277,7 +282,10 @@ class EdaToolKit:
             elif col in numeric_features:
                 numeric_features.remove(col)
             identifiers.append(col)
-            
+        for col in reclassify_as_categorical:
+            numeric_features.remove(col)
+            categorical_features.append(col)
+
         return {
             "target": target,
             "identifiers": identifiers,
