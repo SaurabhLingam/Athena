@@ -3,15 +3,19 @@
 ## Unreleased (fix/benchmark-gaps)
 
 ### Added
-- `describe_dataset` reports placeholder missing values per column (`placeholder_missing`: `?`, `-`, `--`, NA-like tokens, blank strings, and the sentinels -999 / -9999 / 999999 when far outside a column's real values). All tools now treat these as missing.
+- `describe_dataset` reports placeholder missing values per column (`placeholder_missing`: `?`, `-`, `--`, NA-like tokens, blank strings (but not `none` or `unknown`, which are often real categories), and the sentinels -999 / -9999 / 999999 when far outside a column's real values). All tools now treat these as missing.
 - `describe_dataset` flags `constant_columns`, `near_constant_columns` (>= 99% one value) and `redundant_pairs` (one-to-one categorical pairs, numeric pairs with |corr| >= 0.999). An optional `target_col` adds the target's class balance, or a value summary for regression targets.
-- Leakage check: every feature gets a cross-validated single-feature score (a per-value or per-bin lookup model). Features reaching balanced accuracy or R^2 >= 0.98 on their own are flagged, which catches post-outcome columns and coded copies of multiclass targets.
+- Leakage check: every feature gets a cross-validated single-feature score (a per-value or per-bin lookup model; heavily repeated values such as a block of zeros get their own bin). Classification features scoring >= 0.95 are reported as "Likely leakage" and 0.93-0.95 as "Possible leakage, or a very strong genuine predictor"; regression features are flagged at R^2 >= 0.98. The 0.93 cut-off sits midway between the strongest honest feature measured (breast cancer `worst concave points`, 0.899) and a column agreeing with a 3-class target 98% of the time (0.965 at worst over 20 random datasets). This catches post-outcome columns and coded copies of multiclass targets.
 
 ### Changed
 - Integer columns are numeric unless they have <= 10 distinct values or a code-like name (`zip`, `tract`, `fips`, `district`, or the words `code` / `id`). Replaces the entity-key and "p5 > 100" rules.
-- Duplicate feature rows are only scored as leakage when the features have enough distinct combinations that repeats are unlikely by chance. Otherwise they're reported as information.
+- Only exact duplicate rows (features + target) count as leakage, scaled by share: under 1% information only, 1-5% low, above 5% medium. Rows that share features but have a different target are reported as information.
 - Dates are parsed with one format per column (ISO, then month-first, then day-first; the first that parses every value). `date_ranges` reports the chosen `format`.
 - Near-unique long strings with spaces are labelled free text, not identifiers.
+- When every value in a date column fits both day-first and month-first, `date_ranges` reports `format: "ambiguous"` with both possible ranges instead of picking one.
+
+### Fixed
+- `run_baselines` split features into numeric and categorical by dtype, so integer codes labelled categorical (e.g. `weekday`, `store_code`) were modelled as numbers. It now uses the same column roles as `describe_dataset`.
 
 ## 0.3.0 — 2026-10-29
 
