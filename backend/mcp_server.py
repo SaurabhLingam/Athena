@@ -171,7 +171,7 @@ def run_baselines(csv_path: str, target_col: str, max_rows: int | None = None, n
 @_guard
 def check_drift(reference_csv: str, current_csv: str, max_rows: int | None = None) -> dict:
     """Distribution drift between a reference (e.g. train) and a current (e.g. test/prod) CSV."""
-    from backend.drift import DriftAnalyzer
+    from backend.drift import DriftAnalyzer, DRIFT_THRESHOLD
     ref, ref_meta = _load(reference_csv, max_rows)
     cur, cur_meta = _load(current_csv, max_rows)
     result = DriftAnalyzer().compare(ref, cur)
@@ -182,7 +182,7 @@ def check_drift(reference_csv: str, current_csv: str, max_rows: int | None = Non
         "overall_drift_score": result["overall_drift_score"],
         "summary": result["summary"],
         "n_columns_compared": len(result["column_drift"]),
-        "n_drifted": sum(c["drift_score"] > 25 for c in drifted),
+        "n_drifted": sum(c["drift_score"] > DRIFT_THRESHOLD for c in drifted),
         "top_drifted": [c for c in drifted if c["drift_score"] > 0][:TOP_N],
         "new_categories": {k: v[:TOP_N] for k, v in list(result["new_categories"].items())[:TOP_N]},
         "missing_rate_delta": result["missing_rate_delta"],

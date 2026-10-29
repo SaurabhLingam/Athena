@@ -14,6 +14,7 @@
 - Date columns are detected by dtype or by parsing a sample of values. They're no longer treated as categories, and drift reports each side's date range instead of a 100% drift score.
 - Whether a column holds whole numbers is now decided by dtype, so whole-number float columns (e.g. seconds, population counts) are numeric features instead of entity keys or categories.
 - Model Arena classifiers use balanced class weights, so baselines on imbalanced data are no longer dominated by the majority class (BRFSS diabetes: balanced accuracy 0.575 → 0.754).
+- Drift scored statistical significance instead of shift size: any column with p < 0.05 got +20 points, so on large files tiny shifts counted as drift (creditcard `Amount`, KS 0.024, scored 22.4). Numeric drift is now the KS statistic and categorical drift the total variation distance (both ×100). New categories count through their share of rows instead of +10 each. A column drifts above 10 (was 25 including the bonus). `ks_pvalue` is still reported.
 
 ### Changed
 - `describe_dataset` lists the first 30 columns as compact `name|dtype|role|n_unique|missing_pct` strings, plus a count and the names (`hidden_columns`) of the rest. `check_drift`'s `top_drifted` omits columns with a drift score of 0.

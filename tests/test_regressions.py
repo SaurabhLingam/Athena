@@ -3,7 +3,7 @@ import pandas as pd
 from typer.testing import CliRunner
 
 from backend.cli import app
-from backend.drift import DriftAnalyzer
+from backend.drift import DriftAnalyzer, DRIFT_THRESHOLD
 from backend.eda import EdaToolKit
 from backend.ml import MLdiagnosticskit
 
@@ -122,3 +122,17 @@ def test_arena_classifiers_handle_imbalance():
     scores = {r["model"]: r["score"] for r in result["ranking"]}
     # Unweighted models score ~0.61-0.63 here by leaning on the majority class
     assert all(s > 0.7 for s in scores.values()), scores
+
+
+def test_drift_scores_effect_size_not_significance():
+    rng = np.random.default_rng(0)
+    n = 50_000
+    ref = pd.DataFrame({"tiny": rng.normal(0, 1, n), "big": rng.normal(0, 1, n),
+                        "cat": rng.choice(list("abc"), n)})
+    cur = pd.DataFrame({"tiny": rng.normal(0.06, 1, n), "big": rng.normal(1.5, 1, n),
+                        "cat": np.append(rng.choice(list("abc"), n - 5), list("vwxyz"))})
+    cols = {c["column"]: c for c in DriftAnalyzer().compare(ref, cur)["column_drift"]}
+    assert cols["tiny"]["ks_pvalue"] < 0.05       # significant at this sample size...
+    assert cols["tiny"]["drift_score"] < DRIFT_THRESHOLD   # ...but a small shift
+    assert cols["big"]["drift_score"] > DRIFT_THRESHOLD
+    assert cols["cat"]["drift_score"] < DRIFT_THRESHOLD    # 5 rare new categories are not drift

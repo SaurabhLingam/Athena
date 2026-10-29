@@ -8,6 +8,10 @@ except ImportError:
     from eda import EdaToolKit
 
 
+# A column drifts when its effect size (KS statistic or TVD, scaled to 0-100) exceeds 10.
+DRIFT_THRESHOLD = 10
+
+
 class DriftAnalyzer:
     def compare(self, train_df: pd.DataFrame, test_df: pd.DataFrame) -> dict:
         common_cols = [c for c in train_df.columns if c in test_df.columns]
@@ -46,7 +50,7 @@ class DriftAnalyzer:
 
         overall_drift_score = self._overall_score(column_drift)
 
-        drifted_cols = [c for c in column_drift if c["drift_score"] > 25]
+        drifted_cols = [c for c in column_drift if c["drift_score"] > DRIFT_THRESHOLD]
         summary = self._build_summary(drifted_cols, new_categories, missing_rate_delta)
 
         return {
@@ -73,10 +77,9 @@ class DriftAnalyzer:
         train_mean = float(train_clean.mean())
         test_mean = float(test_clean.mean())
 
-        # Score based on KS statistic — 0 to 1, scale to 0-100
-        # Also penalize if p-value is very low (statistically significant)
-        significance_boost = 20 if ks_pvalue < 0.05 else 0
-        drift_score = min(100, round(float(ks_stat) * 100 + significance_boost, 1))
+        # Score the size of the shift (KS statistic, 0-1 -> 0-100). The p-value is
+        # reported but not scored: on large samples almost any shift is "significant".
+        drift_score = min(100, round(float(ks_stat) * 100, 1))
 
         return {
             "column": col,
@@ -95,7 +98,7 @@ class DriftAnalyzer:
         test_cats = set(test_clean.unique())
         new_cats = list(test_cats - train_cats)
 
-        # Distribution shift — compare value frequencies
+        # Distribution shift: total variation distance between value frequencies
         train_dist = train_clean.value_counts(normalize=True)
         test_dist = test_clean.value_counts(normalize=True)
 
@@ -105,9 +108,9 @@ class DriftAnalyzer:
             for c in all_cats
         )
 
-        # New categories are a hard penalty
-        new_cat_penalty = min(40, len(new_cats) * 10)
-        drift_score = min(100, round(float(shift) * 50 + new_cat_penalty, 1))
+        # TVD (0-1) on the same 0-100 scale as KS. New categories count through their
+        # share of rows (already in the shift), not a fixed per-category penalty.
+        drift_score = min(100, round(float(shift) * 50, 1))
 
         return {
             "column": col,
