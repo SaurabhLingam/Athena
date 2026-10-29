@@ -9,14 +9,13 @@ from backend.mcp_server import describe_dataset, check_leakage, run_baselines, c
 def labeled_csv(tmp_path):
     rng = np.random.default_rng(0)
     n = 300
-    # Rounded: Athena treats columns with >=95% unique values as ID-like.
-    x1 = rng.normal(size=n).round(1)
-    x2 = rng.normal(size=n).round(1)
+    x1 = rng.normal(size=n)
+    x2 = rng.normal(size=n)
     y = (x1 + 0.5 * x2 > 0).astype(int)
     df = pd.DataFrame({
         "x1": x1,
         "x2": x2,
-        "leak": y * 10 + rng.normal(scale=0.5, size=n).round(1),  # near-copy of target
+        "leak": y * 10 + rng.normal(scale=0.01, size=n),  # near-copy of target
         "color": rng.choice(["red", "blue", "green"], size=n),
         "target": y,
     })
@@ -55,8 +54,8 @@ def test_run_baselines(labeled_csv):
 
 def test_check_drift_detects_shift(tmp_path):
     rng = np.random.default_rng(1)
-    ref = pd.DataFrame({"a": rng.normal(0, 1, 500).round(1), "b": rng.normal(0, 1, 500).round(1)})
-    cur = pd.DataFrame({"a": rng.normal(3, 1, 500).round(1), "b": rng.normal(0, 1, 500).round(1)})
+    ref = pd.DataFrame({"a": rng.normal(0, 1, 500), "b": rng.normal(0, 1, 500)})
+    cur = pd.DataFrame({"a": rng.normal(3, 1, 500), "b": rng.normal(0, 1, 500)})
     ref.to_csv(tmp_path / "ref.csv", index=False)
     cur.to_csv(tmp_path / "cur.csv", index=False)
     out = check_drift(str(tmp_path / "ref.csv"), str(tmp_path / "cur.csv"))
