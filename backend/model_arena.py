@@ -200,11 +200,11 @@ class ModelArenaKit:
     def _classification_models(self):
         return [
             ("Logistic Regression", LogisticRegression(
-                max_iter=1000, random_state=SEED, solver="lbfgs"
+                max_iter=1000, random_state=SEED, solver="lbfgs", class_weight="balanced"
             ), True),
             ("Random Forest", RandomForestClassifier(
                 n_estimators=100, random_state=SEED, n_jobs=1,
-                max_depth=8, min_samples_leaf=2
+                max_depth=8, min_samples_leaf=2, class_weight="balanced"
             ), False),
         ]
 
@@ -278,7 +278,8 @@ class ModelArenaKit:
                 X_val = pre.transform(X.iloc[val_idx])
                 y_train, y_val = y[train_idx], y[val_idx]
 
-                model, _ = fit_lgb_early_stopped(X_train, y_train, params, task_type, seed=SEED + fold_i)
+                model, _ = fit_lgb_early_stopped(X_train, y_train, params, task_type, seed=SEED + fold_i,
+                                                 balanced=True)
                 y_pred = predict_labels(model, X_val, task_type)
 
                 fold_scores.append(float(metric_fn(y_val, y_pred)))

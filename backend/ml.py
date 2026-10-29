@@ -14,6 +14,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
+from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.metrics import calinski_harabasz_score
 
@@ -51,11 +52,12 @@ def lgb_params(task_type: str, n_classes: int = 2) -> dict:
 
 
 def fit_lgb_early_stopped(X_train, y_train, params: dict, task_type: str, seed: int = SEED,
-                          es_fraction: float = 0.15):
+                          es_fraction: float = 0.15, balanced: bool = False):
     """
     Train LightGBM with early stopping on a holdout carved out of the training
     data, so the caller's validation fold stays untouched for scoring.
     Returns (model, evals_result) with curves under "train" and "es".
+    balanced=True weights classes inversely to their frequency (class_weight="balanced").
     """
     stratify = y_train if task_type == "classification" else None
     try:
@@ -69,8 +71,12 @@ def fit_lgb_early_stopped(X_train, y_train, params: dict, task_type: str, seed: 
         )
 
     evals_result = {}
-    fit_data = lgb.Dataset(X_fit, y_fit)
-    es_data = lgb.Dataset(X_es, y_es, reference=fit_data)
+    weight = es_weight = None
+    if balanced and task_type == "classification":
+        weight = compute_sample_weight("balanced", y_fit)
+        es_weight = compute_sample_weight("balanced", y_es)
+    fit_data = lgb.Dataset(X_fit, y_fit, weight=weight)
+    es_data = lgb.Dataset(X_es, y_es, weight=es_weight, reference=fit_data)
     model = lgb.train(
         params,
         fit_data,

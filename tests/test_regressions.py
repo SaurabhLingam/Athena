@@ -108,3 +108,17 @@ def test_whole_number_floats_are_numeric_features():
     })
     views = EdaToolKit().build_column_views(df, "target")
     assert {"Time", "Population"} <= set(views["numeric_features"])
+
+
+def test_arena_classifiers_handle_imbalance():
+    from backend.model_arena import ModelArenaKit
+    rng = np.random.default_rng(0)
+    n = 3000
+    x = rng.normal(size=(n, 3))
+    y = (x[:, 0] + rng.normal(scale=1.0, size=n) > 1.6).astype(int)  # ~13% positives
+    df = pd.DataFrame(x, columns=["a", "b", "c"]).assign(target=y)
+    views = EdaToolKit().build_column_views(df, "target")
+    result = ModelArenaKit().run_arena(df, views, "target", "classification")
+    scores = {r["model"]: r["score"] for r in result["ranking"]}
+    # Unweighted models score ~0.61-0.63 here by leaning on the majority class
+    assert all(s > 0.7 for s in scores.values()), scores
