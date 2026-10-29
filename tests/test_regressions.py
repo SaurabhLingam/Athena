@@ -250,3 +250,20 @@ def test_single_feature_leaks_near_threshold_and_with_zero_blocks():
     report = _leakage(df_b)
     assert "days_in_followup" in report["suspicious_features"] and report["leakage_score"] >= 40
     assert MLdiagnosticskit._single_feature_score(df_b["days_in_followup"], df_b["target"])[1] == 1.0
+
+
+def test_baselines_use_the_same_roles_as_describe_dataset():
+    from backend.model_arena import ModelArenaKit
+    rng = np.random.default_rng(0)
+    n = 500
+    df = pd.DataFrame({
+        "hours": rng.integers(1, 99, n),          # int, many values -> numeric
+        "weekday": rng.integers(0, 7, n),         # int, <= 10 values -> categorical
+        "store_code": rng.integers(100, 150, n),  # int code by name -> categorical
+        "price": rng.normal(100, 10, n),
+        "target": rng.integers(0, 2, n),
+    })
+    views = EdaToolKit().build_column_views(df, "target")
+    _, _, num_cols, cat_cols = ModelArenaKit()._prepare(df, views, "target", "classification")
+    assert set(num_cols) == {"hours", "price"} == set(views["numeric_features"])
+    assert set(cat_cols) == {"weekday", "store_code"} == set(views["categorical_features"])

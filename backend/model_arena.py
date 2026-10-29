@@ -138,7 +138,10 @@ class ModelArenaKit:
         X = data[feature_cols].copy()
         y_raw = data[target_col]
 
-        num_cols = [c for c in feature_cols if pd.api.types.is_numeric_dtype(X[c])]
+        # Use the roles from build_column_views (shared with describe_dataset), not dtype:
+        # integer codes such as weekday or zipcode are categorical even though they're numbers.
+        numeric_role = set(col_views.get("numeric_features", []))
+        num_cols = [c for c in feature_cols if c in numeric_role and pd.api.types.is_numeric_dtype(X[c])]
         cat_cols = [c for c in feature_cols if c not in num_cols]
 
         X[num_cols] = X[num_cols].astype(float)
