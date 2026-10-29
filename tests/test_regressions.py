@@ -233,3 +233,20 @@ def test_ambiguous_day_month_dates_report_both_ranges():
     }
     iso = EdaToolKit().date_ranges(pd.DataFrame({"d": ["2021-03-04", "2021-01-02"]}), ["d"])["d"]
     assert iso["format"] == "%Y-%m-%d"
+
+
+def test_single_feature_leaks_near_threshold_and_with_zero_blocks():
+    rng = np.random.default_rng(1)
+    n = 1000
+    # (a) 0/1/2 column matching a 3-class target 98% of the time
+    y3 = rng.integers(0, 3, n)
+    agree = np.where(rng.random(n) < 0.98, y3, (y3 + 1) % 3)
+    df_a = pd.DataFrame({"x": rng.normal(size=n), "agree": agree, "target": y3})
+    assert "agree" in _leakage(df_a)["suspicious_features"]
+    # (b) post-outcome: 0 for every negative row, 31-180 for every positive row
+    y2 = rng.integers(0, 2, n)
+    days = np.where(y2 == 1, rng.integers(31, 181, n), 0)
+    df_b = pd.DataFrame({"x": rng.normal(size=n), "days_in_followup": days, "target": y2})
+    report = _leakage(df_b)
+    assert "days_in_followup" in report["suspicious_features"] and report["leakage_score"] >= 40
+    assert MLdiagnosticskit._single_feature_score(df_b["days_in_followup"], df_b["target"])[1] == 1.0

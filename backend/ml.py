@@ -30,8 +30,11 @@ LEAKAGE_CORR_THRESHOLD = 0.95
 # Single-feature AUC reaches 0.95 far more easily than |correlation| does,
 # so strong-but-honest predictors need a stricter cut-off.
 LEAKAGE_AUC_THRESHOLD = 0.995
-# Cross-validated balanced accuracy / R^2 of a one-feature lookup model.
-SINGLE_FEATURE_LEAK_THRESHOLD = 0.98
+# Cross-validated score of a one-feature lookup model. Classification: the strongest honest
+# feature measured scores 0.899 (breast cancer worst concave points) and a column agreeing with
+# a 3-class target 98% of the time scores 0.965-0.987, so 0.93 leaves ~0.03 either side.
+# Regression: honest features peak at 0.70 R^2 (EV Model Year).
+SINGLE_FEATURE_LEAK_THRESHOLD = {"balanced_accuracy": 0.93, "R^2": 0.98}
 
 
 def lgb_params(task_type: str, n_classes: int = 2) -> dict:
@@ -403,8 +406,17 @@ class MLdiagnosticskit:
         y_numeric = pd.to_numeric(pair["y"], errors="coerce")
         is_regression = bool(y_numeric.notna().all() and y_numeric.nunique() > 10)
         x = pair["x"]
+        n_bins = 50 if is_regression else 20
         if pd.api.types.is_numeric_dtype(x) and x.nunique() > 20:
-            x = pd.qcut(x, q=50 if is_regression else 20, duplicates="drop")
+            # Heavily repeated values (e.g. a block of zeros) get their own bin; qcut would
+            # otherwise drop their duplicate edges and merge them into the neighbouring bin.
+            shares = x.value_counts(normalize=True)
+            heavy = shares[shares >= 1 / n_bins].index
+            rest = ~x.isin(heavy) & x.notna()
+            binned = x.astype(str)
+            if rest.sum() > 0 and x[rest].nunique() > 1:
+                binned[rest] = pd.qcut(x[rest], q=n_bins, duplicates="drop").astype(str)
+            x = binned
         keys = x.astype(str).to_numpy()  # NaN becomes its own "nan" bin
         y = (y_numeric if is_regression else pair["y"].astype(str)).to_numpy()
         kf = KFold(n_splits=n_folds, shuffle=True, random_state=SEED)
@@ -466,7 +478,7 @@ class MLdiagnosticskit:
             if col in suspicious or col not in df.columns:
                 continue
             scored = self._single_feature_score(df[col], df[target_col])
-            if scored is not None and scored[1] >= SINGLE_FEATURE_LEAK_THRESHOLD:
+            if scored is not None and scored[1] >= SINGLE_FEATURE_LEAK_THRESHOLD[scored[0]]:
                 leakage_score += 40
                 suspicious.append(col)
                 self.add_penalty(
