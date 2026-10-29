@@ -35,6 +35,8 @@ LEAKAGE_AUC_THRESHOLD = 0.995
 # a 3-class target 98% of the time scores 0.965-0.987, so 0.93 leaves ~0.03 either side.
 # Regression: honest features peak at 0.70 R^2 (EV Model Year).
 SINGLE_FEATURE_LEAK_THRESHOLD = {"balanced_accuracy": 0.93, "R^2": 0.98}
+# At or above this a flagged column is "likely" leakage; below it, "possible".
+SINGLE_FEATURE_LIKELY_LEAK = 0.95
 
 
 def lgb_params(task_type: str, n_classes: int = 2) -> dict:
@@ -478,13 +480,20 @@ class MLdiagnosticskit:
             if col in suspicious or col not in df.columns:
                 continue
             scored = self._single_feature_score(df[col], df[target_col])
-            if scored is not None and scored[1] >= SINGLE_FEATURE_LEAK_THRESHOLD[scored[0]]:
+            if scored is None or scored[1] < SINGLE_FEATURE_LEAK_THRESHOLD[scored[0]]:
+                continue
+            suspicious.append(col)
+            detail = f"(single-feature CV {scored[0]} {scored[1]:.3f})"
+            if scored[1] >= SINGLE_FEATURE_LIKELY_LEAK:
                 leakage_score += 40
-                suspicious.append(col)
-                self.add_penalty(
-                    "Leakage Checks",
-                    f"Severe leakage risk: {col} alone predicts the target (single-feature CV {scored[0]} {scored[1]:.3f})"
-                )
+                self.add_penalty("Leakage Checks",
+                                 f"Likely leakage: {col} alone predicts the target {detail}. "
+                                 "Check whether it's available at prediction time.")
+            else:
+                leakage_score += 10
+                self.add_penalty("Leakage Checks",
+                                 f"Possible leakage, or a very strong genuine predictor: {col} {detail}. "
+                                 "Verify before using.")
 
         id_cols = col_views.get("identifiers", [])
         if id_cols:

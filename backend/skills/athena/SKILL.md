@@ -18,6 +18,7 @@ Every tool accepts `max_rows`: pass it (e.g. `50000`) for CSVs over ~100k rows t
    - Note `id` role columns (IDs) and high `missing_pct` columns. They'll come up again in later steps.
 2. **`check_leakage(csv_path, target_col)`** — before any modelling.
    - `risk: high` (score ≥ 40): a feature almost certainly encodes the target. Baseline scores will be inflated and meaningless until `suspicious_features` are removed. Tell the user which columns and why (`issues`), and ask before continuing.
+   - Issues starting "Likely leakage" mean that column alone predicts the target (single-feature score >= 0.95). Ask whether it's known at prediction time (e.g. recorded after the outcome). Issues starting "Possible leakage" (0.93-0.95) may be a very strong genuine predictor, so present them as something to verify, not as a confirmed leak.
    - `risk: medium`: usually heavy duplicate rows or one suspicious feature. Report it and continue, but caveat the baseline numbers.
    - Identifier columns appear in `suspicious_features` with no score penalty. They're a "drop or engineer" recommendation, not leakage.
 3. **`run_baselines(csv_path, target_col)`** — realistic performance floor.
