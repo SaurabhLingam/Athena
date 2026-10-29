@@ -36,14 +36,60 @@ def _load(csv_path: str, max_rows: int | None) -> tuple["pd.DataFrame", dict]:
     path = Path(csv_path).expanduser()
     if not path.is_file():
         raise ValueError(f"CSV not found: {csv_path}")
-    df = pd.read_csv(path)
+    # Read NA-like tokens as text so _replace_placeholders can count them per column
+    df = pd.read_csv(path, keep_default_na=False, na_values=[""])
     if df.empty:
         raise ValueError(f"CSV is empty: {csv_path}")
+    df, placeholders = _replace_placeholders(df)
     meta = {"rows_total": len(df), "sampled": False}
     if max_rows and len(df) > max_rows:
         df = df.sample(n=max_rows, random_state=SEED).reset_index(drop=True)
         meta.update(sampled=True, rows_used=max_rows)
+    df.attrs["placeholders"] = placeholders  # counts are over the full file
     return df, meta
+
+
+PLACEHOLDER_TOKENS = {"?", "-", "--", "na", "n/a", "nan", "null", "none", "#n/a", "<na>"}
+NUMERIC_SENTINELS = (-999, -9999, 999999)
+
+
+def _replace_placeholders(df):
+    """Turn placeholder strings and far-out numeric sentinels into NaN.
+    Returns (df, {column: {placeholder: count}})."""
+    import pandas as pd
+    counts = {}
+    for col in df.columns:
+        s = df[col]
+        found = {}
+        if s.dtype == object:
+            text = s.astype(str).str.strip()
+            mask = s.notna() & (text.str.lower().isin(PLACEHOLDER_TOKENS) | (text == ""))
+            if mask.any():
+                for token, n in text[mask].replace("", "<blank>").value_counts().items():
+                    found[str(token)] = int(n)
+                s = s.mask(mask)
+                # A numeric column that only looked like text because of placeholders
+                converted = pd.to_numeric(s, errors="coerce")
+                if converted.notna().sum() == s.notna().sum():
+                    s = converted
+        if pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s):
+            is_sentinel = s.isin(NUMERIC_SENTINELS)
+            others = s[~is_sentinel].dropna()
+            if is_sentinel.any() and len(others):
+                span = max(float(others.max() - others.min()), 1.0)
+                lo, hi = float(others.min()), float(others.max())
+                far = [v for v in NUMERIC_SENTINELS if (s == v).any() and (
+                    v < lo - span or v > hi + span           # far outside the real range
+                    or (v < 0 <= lo)                          # negative in a non-negative column
+                    or (v > 0 and hi > 0 and v > 10 * hi))]   # an order of magnitude above it
+                if far:
+                    for v in far:
+                        found[str(v)] = int((s == v).sum())
+                    s = s.mask(s.isin(far))
+        if found:
+            df[col] = s
+            counts[str(col)] = found
+    return df, counts
 
 
 def _require_target(df, target_col: str):
@@ -69,6 +115,7 @@ def describe_dataset(csv_path: str, max_rows: int | None = None) -> dict:
     """Columns, types, inferred roles, row count and missing values. Run first to pick a target column."""
     from backend.eda import EdaToolKit
     df, meta = _load(csv_path, max_rows)
+    placeholders = df.attrs.get("placeholders", {})
     eda = EdaToolKit()
     basic = eda.basicdatainfo(df)
     views = eda.build_column_views(df)
@@ -96,6 +143,7 @@ def describe_dataset(csv_path: str, max_rows: int | None = None) -> dict:
         "total_missing_pct": round(float(df.isnull().values.mean()) * 100, 2),
         "duplicate_rows": int(df.duplicated().sum()),
         "date_ranges": eda.date_ranges(df, views["datetime_cols"]),
+        **({"placeholder_missing": placeholders} if placeholders else {}),
     }
 
 

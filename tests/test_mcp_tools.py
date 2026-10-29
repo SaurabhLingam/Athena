@@ -143,3 +143,29 @@ def test_tool_outputs_are_ascii(tmp_path):
     assert "leakage_warning" in outs[2]
     for out in outs:
         assert json.dumps(out, ensure_ascii=False).isascii(), out
+
+
+def test_placeholders_and_sentinels_count_as_missing(tmp_path):
+    n = 100
+    rng = np.random.default_rng(0)
+    age = rng.integers(20, 80, n).astype(object)
+    age[:5] = "?"
+    age[5:8] = "N/A"
+    income = rng.normal(50_000, 10_000, n).round()
+    income[:4] = -999          # sentinel far below real values
+    score = rng.integers(-1000, 1000, n)
+    score[:2] = -999           # inside the real range, so not a sentinel
+    city = rng.choice(["Pune", "Delhi"], n).astype(object)
+    city[:3] = "  "
+    city[3:5] = "none"
+    df = pd.DataFrame({"age": age, "income": income, "score": score, "city": city})
+    df.to_csv(tmp_path / "ph.csv", index=False)
+    out = describe_dataset(str(tmp_path / "ph.csv"))
+    ph = out["placeholder_missing"]
+    assert ph["age"] == {"?": 5, "N/A": 3}
+    assert ph["income"] == {"-999": 4}
+    assert "score" not in ph
+    assert ph["city"] == {"<blank>": 3, "none": 2}
+    cols = {c.split("|")[0]: c.split("|") for c in out["columns"]}
+    assert cols["age"][1] == "float64" and cols["age"][2] == "num"   # parsed as numeric once cleaned
+    assert float(cols["age"][4]) == 8.0
