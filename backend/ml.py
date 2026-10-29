@@ -8,7 +8,7 @@ import numpy as np
 from typing import Dict, Optional
 
 from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
-from sklearn.metrics import balanced_accuracy_score, r2_score
+from sklearn.metrics import balanced_accuracy_score, r2_score, roc_auc_score
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
@@ -23,6 +23,10 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 SEED = 42
+
+
+# Same cut-off for |correlation| and single-feature AUC.
+LEAKAGE_CORR_THRESHOLD = 0.95
 
 
 def lgb_params(task_type: str, n_classes: int = 2) -> dict:
@@ -356,13 +360,47 @@ class MLdiagnosticskit:
         }
 
 
+    @staticmethod
+    def _numeric_target_strength(feature: pd.Series, target: pd.Series):
+        """|Pearson| for regression targets, single-feature AUC (mean one-vs-rest) for classification."""
+        pair = pd.DataFrame({"x": feature, "y": target}).dropna()
+        if len(pair) < 10 or pair["x"].nunique() < 2:
+            return None
+        y_numeric = pd.to_numeric(pair["y"], errors="coerce")
+        if y_numeric.notna().all() and y_numeric.nunique() > 10:
+            r = pair["x"].corr(y_numeric)
+            return None if pd.isna(r) else abs(float(r))
+        classes = pair["y"].unique()
+        if len(classes) < 2:
+            return None
+        if len(classes) == 2:
+            classes = classes[:1]
+        aucs = []
+        for cls in classes:
+            auc = roc_auc_score(pair["y"] == cls, pair["x"])
+            aucs.append(max(auc, 1 - auc))
+        return float(np.mean(aucs))
+
     def run_leakage_checks(self, df: pd.DataFrame, feature_correlation: Dict, col_views: Dict, target_col: str):
         leakage_score = 0
         suspicious = []
 
         num_corr = feature_correlation.get("numeric_target_correlation", {})
         for col, vals in num_corr.items():
-            if abs(vals.get("pearson", 0)) > 0.95:
+            if abs(vals.get("pearson", 0)) > LEAKAGE_CORR_THRESHOLD:
+                leakage_score += 40
+                suspicious.append(col)
+                self.add_penalty("Leakage Checks", f"Severe leakage risk: {col} is highly correlated with target")
+
+        # Numeric features with few distinct values are routed to categorical_features
+        # above, which can hide a near-copy of the target; score every numeric feature.
+        numeric_candidates = [
+            c for c in col_views.get("numeric_features", []) + col_views.get("categorical_features", [])
+            if c not in suspicious and c in df.columns and pd.api.types.is_numeric_dtype(df[c])
+        ]
+        for col in numeric_candidates:
+            strength = self._numeric_target_strength(df[col], df[target_col])
+            if strength is not None and strength > LEAKAGE_CORR_THRESHOLD:
                 leakage_score += 40
                 suspicious.append(col)
                 self.add_penalty("Leakage Checks", f"Severe leakage risk: {col} is highly correlated with target")
