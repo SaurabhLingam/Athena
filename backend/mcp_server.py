@@ -19,6 +19,8 @@ from backend.profiles import get_profile
 
 SEED = 42
 TOP_N = 5
+NEAR_PERFECT_R2 = 0.999
+NEAR_PERFECT_BALANCED_ACC = 0.98
 
 
 def _clean(obj):
@@ -133,7 +135,20 @@ def run_baselines(csv_path: str, target_col: str, max_rows: int | None = None, n
     result = ModelArenaKit(cfg=cfg).run_arena(df, views, target_col, task_type, n_folds=n_folds)
     if result.get("status") != "ok":
         return {**meta, **result}
+    best = result["ranking"][0] if result["ranking"] else {}
+    warning = None
+    if task_type == "classification":
+        if (best.get("score") or 0) > NEAR_PERFECT_BALANCED_ACC:
+            warning = (f"Near-perfect balanced accuracy ({best['score']:.4f}). Almost certainly leakage: "
+                       "check for features derived from the target or that combine into it.")
+    elif best.get("rmse") is not None:
+        y = pd.to_numeric(df[target_col], errors="coerce")
+        r2 = 1 - best["rmse"] ** 2 / y.var() if y.var() > 0 else None
+        if r2 is not None and r2 > NEAR_PERFECT_R2:
+            warning = (f"Near-perfect fit (R² ≈ {r2:.5f}). Almost certainly leakage: "
+                       "check for features that sum or combine into the target.")
     return {
+        **({"leakage_warning": warning} if warning else {}),
         **meta,
         "status": "ok",
         "task_type": task_type,

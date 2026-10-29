@@ -20,7 +20,7 @@ Every tool accepts `max_rows`: pass it (e.g. `50000`) for CSVs over ~100k rows t
 3. **`run_baselines(csv_path, target_col)`** — realistic performance floor.
    - `metric` is `balanced_accuracy` (classification, higher is better; 0.5 = chance for binary) or `rmse` (regression, lower is better, in target units).
    - Report the `winner`, its score ± `std`, and the gap to the simplest model. A small gap means the signal is mostly linear or simple.
-   - Near-perfect scores (balanced accuracy > 0.98) almost always mean leakage. Re-check step 2.
+   - If the result has `leakage_warning` (balanced accuracy > 0.98 or R² > 0.999), treat it as leakage even when `check_leakage` was clean. The leakage check scores one column at a time, so it misses features that only combine into the target (e.g. `casual + registered = cnt`). Find them, for example by asking which columns sum to the target, and tell the user before reporting any score.
    - `status: skipped` means the target isn't a usable classification or regression target.
 4. **`check_drift(reference_csv, current_csv)`** — only when there's a second dataset (train vs test, last month vs this month, train vs production).
    - `overall_drift_score` is 0–100. Below 25 is negligible, 25–50 moderate, above 50 significant.

@@ -66,3 +66,25 @@ def test_check_drift_detects_shift(tmp_path):
 def test_errors_are_structured(labeled_csv):
     assert "error" in check_leakage(labeled_csv, "nope")
     assert "error" in describe_dataset("does/not/exist.csv")
+
+
+def test_run_baselines_warns_when_columns_sum_to_target(tmp_path):
+    rng = np.random.default_rng(0)
+    n = 400
+    a = rng.uniform(0, 100, n).round(2)
+    b = rng.uniform(0, 300, n).round(2)
+    df = pd.DataFrame({"a": a, "b": b, "noise": rng.normal(size=n), "total": a + b})
+    path = tmp_path / "sum.csv"
+    df.to_csv(path, index=False)
+    out = run_baselines(str(path), "total")
+    assert out["status"] == "ok"
+    assert "leakage_warning" in out
+
+
+def test_run_baselines_no_warning_on_honest_data(tmp_path):
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=400)
+    df = pd.DataFrame({"x": x, "y": x + rng.normal(size=400)})
+    df.to_csv(tmp_path / "honest.csv", index=False)
+    out = run_baselines(str(tmp_path / "honest.csv"), "y")
+    assert out["status"] == "ok" and "leakage_warning" not in out
