@@ -268,6 +268,12 @@ def version():
     console.print(f"\n  [cyan]athena-eda[/cyan] [bold white]{v}[/bold white]\n")
 
 @app.command()
+def mcp():
+    """Start the Athena [bold cyan]MCP server[/bold cyan] (stdio) for AI agents."""
+    from backend.mcp_server import main as _mcp_main
+    _mcp_main()
+
+@app.command()
 def update():
     """Update Athena to the [bold cyan]latest version[/bold cyan]."""
     import subprocess
