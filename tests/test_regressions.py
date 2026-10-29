@@ -63,13 +63,15 @@ def test_install_skill_copies_file(tmp_path):
     assert installed.read_text(encoding="utf-8").startswith("---\nname: athena")
 
 
-def test_strong_real_features_are_not_flagged_but_planted_leak_is():
+def test_moderate_real_features_are_not_flagged_but_planted_leak_is():
+    # Binary targets use single-feature AUC tiers (>= 0.90), so breast cancer's AUC ~0.97
+    # "worst" features are flagged as possible/likely too; moderate ones must stay clean.
     from sklearn.datasets import load_breast_cancer
     df = load_breast_cancer(as_frame=True).frame
     df["leak"] = df["target"] + np.random.default_rng(0).normal(scale=0.05, size=len(df))
     flagged = set(_leakage(df)["suspicious_features"])
     assert "leak" in flagged
-    assert not flagged & {"worst perimeter", "worst radius", "worst area", "worst concave points", "mean concave points"}
+    assert not flagged & {"mean texture", "mean smoothness", "mean symmetry", "texture error"}
 
 
 def test_weak_id_name_parts_need_near_uniqueness():
@@ -286,3 +288,56 @@ def test_duplicate_row_severity_scales_with_share():
     assert score == 0 and any("Too few to matter" in r for r in report.recommendation_buckets["Leakage Checks"])
     assert run(30)[0] == 5                 # ~2.9%: low
     assert run(100)[0] == 10               # ~9.1%: medium
+
+
+def _leak_probe(df, target):
+    from backend.eda import EdaToolKit
+    from backend.ml import MLdiagnosticskit
+    eda, kit = EdaToolKit(), MLdiagnosticskit()
+    views = eda.build_column_views(df, target)
+    kit.run_leakage_checks(df, eda.feature_correlation(df, target), views, target)
+    return " ".join(kit.penalty_buckets.get("Leakage Checks", []))
+
+
+def test_binary_leak_probe_scores_with_auc():
+    from backend.ml import MLdiagnosticskit
+    rng = np.random.default_rng(1)
+    n = 3000
+    y = (rng.random(n) < 0.3).astype(int)
+    strong = pd.Series(rng.normal(size=n) + 2.7 * y)   # raw AUC ~0.97
+    honest = pd.Series(rng.normal(size=n) + 0.95 * y)  # raw AUC ~0.75
+    metric, score = MLdiagnosticskit._single_feature_score(strong, pd.Series(y))
+    assert metric == "AUC" and score >= 0.95
+    assert MLdiagnosticskit._single_feature_score(honest, pd.Series(y))[1] < 0.80
+    msgs = _leak_probe(pd.DataFrame({"strong": strong, "honest": honest, "y": y}), "y")
+    assert "Likely leakage: strong" in msgs and "honest" not in msgs
+
+
+def test_rare_positive_yes_no_leak_is_caught():
+    rng = np.random.default_rng(2)
+    n = 4000
+    y = (rng.random(n) < 0.02).astype(int)
+    flag = np.where(y == 1, "Y", "N")
+    flip = rng.random(n) < 0.01
+    flag = np.where(flip, np.where(flag == "Y", "N", "Y"), flag)
+    msgs = _leak_probe(pd.DataFrame({"flag": flag, "x": rng.normal(size=n), "y": y}), "y")
+    assert "flag" in msgs and "x " not in msgs
+
+
+def test_feature_filled_only_for_one_class_is_caught():
+    rng = np.random.default_rng(3)
+    n = 1000
+    y = (rng.random(n) < 0.3).astype(int)
+    filled = np.where(y == 1, rng.normal(size=n), np.nan)
+    msgs = _leak_probe(pd.DataFrame({"filled": filled, "x": rng.normal(size=n), "y": y}), "y")
+    assert "Likely leakage: filled" in msgs
+
+
+def test_multiclass_leak_probe_weights_rare_classes():
+    from backend.ml import MLdiagnosticskit
+    rng = np.random.default_rng(4)
+    n = 3000
+    y = rng.choice(list("abc"), n, p=[0.9, 0.08, 0.02])
+    copy = np.where(rng.random(n) < 0.97, y, "a")
+    metric, score = MLdiagnosticskit._single_feature_score(pd.Series(copy), pd.Series(y))
+    assert metric == "balanced_accuracy" and score >= 0.95

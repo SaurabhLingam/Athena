@@ -33,10 +33,11 @@ LEAKAGE_AUC_THRESHOLD = 0.995
 # Cross-validated score of a one-feature lookup model. Classification: the strongest honest
 # feature measured scores 0.899 (breast cancer worst concave points) and a column agreeing with
 # a 3-class target 98% of the time scores 0.965-0.987, so 0.93 leaves ~0.03 either side.
-# Regression: honest features peak at 0.70 R^2 (EV Model Year).
-SINGLE_FEATURE_LEAK_THRESHOLD = {"balanced_accuracy": 0.93, "R^2": 0.98}
+# Binary targets are scored with out-of-fold single-feature AUC, which (unlike accuracy)
+# doesn't collapse on rare positives. Regression: honest features peak at 0.70 R^2 (EV Model Year).
+SINGLE_FEATURE_LEAK_THRESHOLD = {"AUC": 0.90, "balanced_accuracy": 0.93, "R^2": 0.98}
 # At or above this a flagged column is "likely" leakage; below it, "possible".
-SINGLE_FEATURE_LIKELY_LEAK = 0.95
+SINGLE_FEATURE_LIKELY_LEAK = {"AUC": 0.95, "balanced_accuracy": 0.95, "R^2": 0.95}
 
 
 def lgb_params(task_type: str, n_classes: int = 2) -> dict:
@@ -400,7 +401,10 @@ class MLdiagnosticskit:
     @staticmethod
     def _single_feature_score(feature: pd.Series, target: pd.Series, n_folds: int = 3):
         """Cross-validated score of a lookup model on one feature: each value (or quantile
-        bin, for continuous columns) predicts the training folds' majority class or mean.
+        bin, for continuous columns) predicts from the training folds. Classes are weighted
+        inversely to their frequency, so a rare class isn't drowned out by the majority.
+        Binary targets: AUC of each bin's positive rate. Multiclass: balanced accuracy of the
+        class most over-represented in the bin. Regression: R^2 of the bin mean.
         Returns (metric_name, score) or None."""
         pair = pd.DataFrame({"x": feature, "y": target}).dropna(subset=["y"])
         if len(pair) < 30 or pair["x"].nunique() < 2:
@@ -421,18 +425,38 @@ class MLdiagnosticskit:
             x = binned
         keys = x.astype(str).to_numpy()  # NaN becomes its own "nan" bin
         y = (y_numeric if is_regression else pair["y"].astype(str)).to_numpy()
-        kf = KFold(n_splits=n_folds, shuffle=True, random_state=SEED)
-        preds = np.empty(len(y), dtype=object if not is_regression else float)
-        for tr, te in kf.split(keys):
-            train = pd.DataFrame({"k": keys[tr], "y": y[tr]})
+        classes = np.unique(y) if not is_regression else None
+        is_binary = classes is not None and len(classes) == 2
+        if classes is not None and len(classes) < 2:
+            return None
+        if classes is not None and pd.Series(y).value_counts().min() >= n_folds:
+            kf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=SEED)
+        else:
+            kf = KFold(n_splits=n_folds, shuffle=True, random_state=SEED)
+        preds = np.empty(len(y), dtype=float if (is_regression or is_binary) else object)
+        for tr, te in kf.split(keys, y if classes is not None else None):
+            test_keys = pd.Series(keys[te])
             if is_regression:
+                train = pd.DataFrame({"k": keys[tr], "y": y[tr]})
                 mapping, fallback = train.groupby("k")["y"].mean(), float(np.mean(y[tr]))
+                preds[te] = test_keys.map(mapping).fillna(fallback).to_numpy()
+                continue
+            # Share of each class's (training) rows that fall in each bin = class-weighted counts
+            counts = pd.crosstab(pd.Series(keys[tr], name="k"), pd.Series(y[tr], name="y"))
+            counts = counts.reindex(columns=classes, fill_value=0)
+            weighted = counts / counts.sum(axis=0).replace(0, 1)
+            if is_binary:
+                pos = classes[1]
+                rate = weighted[pos] / weighted.sum(axis=1).replace(0, 1)
+                preds[te] = test_keys.map(rate).fillna(0.5).to_numpy()
             else:
-                mapping = train.groupby("k")["y"].agg(lambda v: v.value_counts().idxmax())
+                mapping = weighted.idxmax(axis=1)
                 fallback = pd.Series(y[tr]).value_counts().idxmax()
-            preds[te] = pd.Series(keys[te]).map(mapping).fillna(fallback).to_numpy()
+                preds[te] = test_keys.map(mapping).fillna(fallback).to_numpy()
         if is_regression:
             return "R^2", float(r2_score(y, preds.astype(float)))
+        if is_binary:
+            return "AUC", float(roc_auc_score(y == classes[1], preds.astype(float)))
         return "balanced_accuracy", float(balanced_accuracy_score(y, preds.astype(str)))
 
     def run_leakage_checks(self, df: pd.DataFrame, feature_correlation: Dict, col_views: Dict, target_col: str):
@@ -484,7 +508,7 @@ class MLdiagnosticskit:
                 continue
             suspicious.append(col)
             detail = f"(single-feature CV {scored[0]} {scored[1]:.3f})"
-            if scored[1] >= SINGLE_FEATURE_LIKELY_LEAK:
+            if scored[1] >= SINGLE_FEATURE_LIKELY_LEAK[scored[0]]:
                 leakage_score += 40
                 self.add_penalty("Leakage Checks",
                                  f"Likely leakage: {col} alone predicts the target {detail}. "
