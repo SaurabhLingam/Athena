@@ -2,7 +2,15 @@ import re
 import warnings
 import pandas as pd
 import numpy as np
-CODE_NAME_HINTS = ("tract", "district", "fips", "zip")
+CODE_NAME_HINTS = ("tract", "district", "fips", "zip")   # matched anywhere in the name
+CODE_NAME_WORDS = {"code", "id"}                          # matched as whole words
+INTEGER_CATEGORICAL_MAX_UNIQUE = 10
+
+
+def looks_like_code_name(col) -> bool:
+    name = str(col).lower()
+    words = set(re.split(r"[^a-z0-9]+", name))
+    return any(h in name for h in CODE_NAME_HINTS) or bool(words & CODE_NAME_WORDS)
 
 
 class EdaToolKit:
@@ -78,8 +86,8 @@ class EdaToolKit:
             if self.is_datetime_like(df[col]):
                 datetime_cols.append(col)
                 continue
-            # Geographic codes are labels even when stored as floats (2020 Census Tract)
-            if any(h in str(col).lower() for h in CODE_NAME_HINTS):
+            # Codes are labels even when stored as numbers (2020 Census Tract, zip, store_id)
+            if looks_like_code_name(col):
                 if df[col].nunique(dropna=True) / n_rows >= 0.95:
                     identifiers.append(col)
                 else:
@@ -100,18 +108,13 @@ class EdaToolKit:
                 identifiers.append(col)
                 
                 continue
-            if is_numeric and is_integer and unique_ratio > 0.5:
-                entity_keys.append(col)
-                
-                continue
-            if is_numeric and is_integer:
-                non_zero = s.dropna()
-                non_zero = non_zero[non_zero != 0]
-                p5 = float(non_zero.quantile(0.05)) if len(non_zero) > 0 else 0
-                if p5 > 100 and n_unique > 50:
+            # Integers are counts/measurements unless they only take a handful of values
+            if is_integer:
+                if n_unique <= INTEGER_CATEGORICAL_MAX_UNIQUE:
                     categorical_features.append(col)
-                    
-                    continue
+                else:
+                    numeric_features.append(col)
+                continue
 
             if not is_numeric and 0.02 < unique_ratio < 0.95:
                 sample = s.dropna().astype(str).head(100)
@@ -135,15 +138,6 @@ class EdaToolKit:
 
             if not is_numeric:
                 categorical_features.append(col)
-                continue
-
-            if is_integer and n_unique <= 30:
-                sample_vals = set(s.dropna().unique())
-                already_encoded = sample_vals.issubset({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
-                if already_encoded:
-                    numeric_features.append(col)
-                else:
-                    categorical_features.append(col)
                 continue
 
             numeric_features.append(col)

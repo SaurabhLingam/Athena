@@ -171,3 +171,22 @@ def test_single_feature_leaks_are_flagged():
     flagged = set(_leakage(df)["suspicious_features"])
     assert {"target_code", "outcome_status"} <= flagged
     assert "x" not in flagged
+
+
+def test_integer_columns_are_numeric_unless_few_values_or_code_names():
+    rng = np.random.default_rng(0)
+    n = 1000
+    df = pd.DataFrame({
+        "fnlwgt": rng.choice(rng.integers(10_000, 900_000, 700), n),  # ~50% unique, like Adult
+        "capital_gain": rng.choice([0, 0, 0, 2174, 5178, 14084, 99999] + list(range(100, 160)), n),
+        "hours": rng.integers(1, 99, n),
+        "weekday": rng.integers(0, 7, n),               # 7 values -> categorical
+        "store_code": rng.integers(100, 400, n),        # code by name
+        "zipcode": rng.integers(10_000, 10_300, n),
+        "target": rng.normal(size=n),
+    })
+    views = EdaToolKit().build_column_views(df, "target")
+    assert {"fnlwgt", "capital_gain", "hours"} <= set(views["numeric_features"])
+    assert "weekday" in views["categorical_features"]
+    for col in ("store_code", "zipcode"):
+        assert col in views["categorical_features"] + views["identifiers"]
