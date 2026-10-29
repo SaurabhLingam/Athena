@@ -221,3 +221,51 @@ def test_none_and_unknown_are_real_categories(tmp_path):
     assert "alarm" not in out.get("placeholder_missing", {})
     alarm = next(c for c in out["columns"] if c.startswith("alarm|"))
     assert alarm.split("|")[3] == "5" and alarm.split("|")[4] == "0"
+
+
+def test_text_tokens_in_numeric_column_are_placeholders(tmp_path):
+    rng = np.random.default_rng(0)
+    n = 200
+    weight = rng.normal(70, 10, n).round(1).astype(object)
+    weight[:6] = "N.A."
+    weight[6:9] = "#VALUE!"
+    weight[9:12] = "unk"               # not a known token, but repeated in a numeric column
+    note = rng.choice(["red", "blue"], n).astype(object)
+    note[:4] = "not available"
+    note[4:6] = "missing"
+    note[6:8] = "."
+    df = pd.DataFrame({"weight": weight, "note": note, "label": rng.integers(0, 2, n)})
+    df.to_csv(tmp_path / "p.csv", index=False)
+    out = describe_dataset(str(tmp_path / "p.csv"))
+    ph = out["placeholder_missing"]
+    assert ph["weight"] == {"N.A.": 6, "#VALUE!": 3, "unk": 3}
+    assert ph["note"] == {"not available": 4, "missing": 2, ".": 2}
+    cols = {c.split("|")[0]: c.split("|") for c in out["columns"]}
+    assert cols["weight"][2] == "num" and float(cols["weight"][4]) == 6.0
+
+
+def test_mostly_text_column_keeps_its_values():
+    from backend.mcp_server import _replace_placeholders
+    s = ["a1", "b2", "c3", "d4", "e5"] * 4 + ["10", "20"]  # mostly text: no placeholders
+    df, counts = _replace_placeholders(pd.DataFrame({"code": s}))
+    assert counts == {} and df["code"].tolist() == s
+
+
+def test_positive_nines_sentinels_need_to_repeat_and_be_far():
+    from backend.mcp_server import _replace_placeholders
+    rng = np.random.default_rng(0)
+    n = 300
+    age = rng.integers(18, 90, n).astype(float)
+    age[:5] = 999
+    income = rng.normal(40_000, 5_000, n).round()
+    income[:3] = 99999 * 10 + 9          # 999999
+    price = rng.integers(10, 1500, n).astype(float)
+    price[:4] = 999                      # a real price inside the range
+    once = rng.integers(0, 100, n).astype(float)
+    once[0] = 9999                       # appears once: not a sentinel
+    df, counts = _replace_placeholders(pd.DataFrame(
+        {"age": age, "income": income, "price": price, "once": once}))
+    assert counts["age"] == {"999": 5}
+    assert counts["income"] == {"999999": 3}
+    assert "price" not in counts and "once" not in counts
+    assert df["age"].isna().sum() == 5

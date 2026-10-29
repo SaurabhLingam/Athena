@@ -53,8 +53,38 @@ def _load(csv_path: str, max_rows: int | None) -> tuple["pd.DataFrame", dict]:
 
 
 # "none" and "unknown" are left out: they are often real categories (e.g. "None" for no alarm)
-PLACEHOLDER_TOKENS = {"?", "-", "--", "na", "n/a", "nan", "null", "#n/a", "<na>"}
-NUMERIC_SENTINELS = (-999, -9999, 999999)
+PLACEHOLDER_TOKENS = {
+    "?", "-", "--", ".", "na", "n/a", "n.a.", "n.a", "nan", "null", "#n/a", "<na>",
+    "missing", "not available", "not provided", "not applicable", "not recorded", "not specified",
+    "#value!", "#ref!", "#div/0!", "#num!", "#name?", "#null!", "#n/a!",
+}
+# A column this share numeric is numeric; its few repeated non-numeric values are placeholders
+NUMERIC_SHARE_FOR_PLACEHOLDERS = 0.9
+MAX_NUMERIC_PLACEHOLDER_TOKENS = 5
+
+
+def _is_nines(v) -> bool:
+    """999, 9999, -999, ... (three or more 9s)."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return False
+    return f == int(f) and len(str(abs(int(f)))) >= 3 and set(str(abs(int(f)))) == {"9"}
+
+
+def _far_sentinels(s) -> list:
+    """All-9s values that repeat and sit far outside the rest of the column."""
+    candidates = [v for v, n in s.value_counts().items() if n >= 2 and _is_nines(v)]
+    if not candidates:
+        return []
+    others = s[~s.isin(candidates)].dropna()
+    if len(others) < 2:
+        return []
+    lo, hi = float(others.min()), float(others.max())
+    span = max(hi - lo, 1.0)
+    return [v for v in candidates
+            if (v < 0 and (v < lo - span or lo >= 0))   # negative below, or in a non-negative column
+            or (v > 0 and v > hi + 3 * span)]           # far above, so a price of 999 stays
 
 
 def _replace_placeholders(df):
@@ -68,6 +98,14 @@ def _replace_placeholders(df):
         if s.dtype == object:
             text = s.astype(str).str.strip()
             mask = s.notna() & (text.str.lower().isin(PLACEHOLDER_TOKENS) | (text == ""))
+            rest = s.notna() & ~mask
+            converted = pd.to_numeric(text.where(rest), errors="coerce")
+            non_numeric = rest & converted.isna()
+            if rest.any() and converted.notna().sum() >= NUMERIC_SHARE_FOR_PLACEHOLDERS * rest.sum():
+                # Mostly numbers: a few repeated text tokens are placeholders (N.A., unk, #VALUE!)
+                tokens = text[non_numeric].value_counts()
+                if len(tokens) <= MAX_NUMERIC_PLACEHOLDER_TOKENS and (tokens >= 2).all():
+                    mask = mask | non_numeric
             if mask.any():
                 for token, n in text[mask].replace("", "<blank>").value_counts().items():
                     found[str(token)] = int(n)
@@ -77,19 +115,11 @@ def _replace_placeholders(df):
                 if converted.notna().sum() == s.notna().sum():
                     s = converted
         if pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s):
-            is_sentinel = s.isin(NUMERIC_SENTINELS)
-            others = s[~is_sentinel].dropna()
-            if is_sentinel.any() and len(others):
-                span = max(float(others.max() - others.min()), 1.0)
-                lo, hi = float(others.min()), float(others.max())
-                far = [v for v in NUMERIC_SENTINELS if (s == v).any() and (
-                    v < lo - span or v > hi + span           # far outside the real range
-                    or (v < 0 <= lo)                          # negative in a non-negative column
-                    or (v > 0 and hi > 0 and v > 10 * hi))]   # an order of magnitude above it
-                if far:
-                    for v in far:
-                        found[str(v)] = int((s == v).sum())
-                    s = s.mask(s.isin(far))
+            far = _far_sentinels(s)
+            for v in far:
+                found[str(int(v))] = int((s == v).sum())
+            if far:
+                s = s.mask(s.isin(far))
         if found:
             df[col] = s
             counts[str(col)] = found
