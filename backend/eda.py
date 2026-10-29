@@ -1,4 +1,5 @@
 import re
+import warnings
 import pandas as pd
 import numpy as np
 class EdaToolKit:
@@ -30,6 +31,33 @@ class EdaToolKit:
             return float(x)
         return x
     
+    @staticmethod
+    def is_datetime_like(s: pd.Series, sample_size: int = 200) -> bool:
+        """Datetime dtype, or strings where >=90% of a sample parse as dates."""
+        if pd.api.types.is_datetime64_any_dtype(s):
+            return True
+        if not (pd.api.types.is_object_dtype(s) or pd.api.types.is_string_dtype(s)):
+            return False
+        sample = s.dropna().astype(str).head(sample_size)
+        # Needs a date separator, so plain numbers and codes are never parsed as dates
+        if sample.empty or not sample.str.contains(r"\d[-/.]\d|\d{4}-\d", regex=True).mean() >= 0.9:
+            return False
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            parsed = pd.to_datetime(sample, errors="coerce", format="mixed")
+        return parsed.notna().mean() >= 0.9
+
+    @staticmethod
+    def date_ranges(df: pd.DataFrame, cols: list) -> dict:
+        out = {}
+        for col in cols:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                d = pd.to_datetime(df[col], errors="coerce", format="mixed")
+            out[col] = {"min": str(d.min().date()) if d.notna().any() else None,
+                        "max": str(d.max().date()) if d.notna().any() else None}
+        return out
+
     def build_column_views(self, df: pd.DataFrame, target_col: str | None = None):
         target = [target_col] if target_col and target_col in df.columns else []
 
@@ -38,10 +66,14 @@ class EdaToolKit:
         categorical_features = []
         entity_keys = []
         free_text_cols = []
+        datetime_cols = []
 
         n_rows = len(df)
         for col in df.columns:
             if col in target:
+                continue
+            if self.is_datetime_like(df[col]):
+                datetime_cols.append(col)
                 continue
 
             s = df[col]
@@ -155,7 +187,8 @@ class EdaToolKit:
             "entity_keys": entity_keys,
             "numeric_features": numeric_features,
             "categorical_features": categorical_features,
-            "free_text_cols": free_text_cols
+            "free_text_cols": free_text_cols,
+            "datetime_cols": datetime_cols
 
         }
     

@@ -76,7 +76,7 @@ def describe_dataset(csv_path: str, max_rows: int | None = None) -> dict:
     basic = eda.basicdatainfo(df)
     views = eda.build_column_views(df)
     role_of = {}
-    for role in ("identifiers", "numeric_features", "categorical_features", "entity_keys", "free_text_cols"):
+    for role in ("identifiers", "datetime_cols", "numeric_features", "categorical_features", "entity_keys", "free_text_cols"):
         for c in views.get(role, []):
             role_of.setdefault(c, role)
     missing = df.isnull().mean()
@@ -96,6 +96,7 @@ def describe_dataset(csv_path: str, max_rows: int | None = None) -> dict:
         "columns": columns,
         "total_missing_pct": round(float(df.isnull().values.mean()) * 100, 2),
         "duplicate_rows": int(df.duplicated().sum()),
+        "date_ranges": eda.date_ranges(df, views["datetime_cols"]),
     }
 
 
@@ -178,6 +179,7 @@ def check_drift(reference_csv: str, current_csv: str, max_rows: int | None = Non
         "top_drifted": drifted[:TOP_N],
         "new_categories": {k: v[:TOP_N] for k, v in list(result["new_categories"].items())[:TOP_N]},
         "missing_rate_delta": result["missing_rate_delta"],
+        "date_ranges": result["date_ranges"],
     }
 
 

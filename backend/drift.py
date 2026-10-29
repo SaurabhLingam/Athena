@@ -12,8 +12,11 @@ class DriftAnalyzer:
     def compare(self, train_df: pd.DataFrame, test_df: pd.DataFrame) -> dict:
         common_cols = [c for c in train_df.columns if c in test_df.columns]
 
-        id_cols = set(EdaToolKit().build_column_views(train_df)["identifiers"])
-        common_cols = [c for c in common_cols if c not in id_cols]
+        eda = EdaToolKit()
+        views = eda.build_column_views(train_df)
+        date_cols = [c for c in views["datetime_cols"] if c in test_df.columns]
+        skip = set(views["identifiers"]) | set(date_cols)
+        common_cols = [c for c in common_cols if c not in skip]
 
         column_drift = []
         new_categories = {}
@@ -51,6 +54,10 @@ class DriftAnalyzer:
             "column_drift": column_drift,
             "new_categories": new_categories,
             "missing_rate_delta": missing_rate_delta,
+            "date_ranges": {
+                "train": eda.date_ranges(train_df, date_cols),
+                "test": eda.date_ranges(test_df, date_cols),
+            },
             "summary": summary
         }
 

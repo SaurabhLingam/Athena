@@ -83,3 +83,16 @@ def test_weak_id_name_parts_need_near_uniqueness():
     views = EdaToolKit().build_column_views(df, "target")
     assert "education_num" not in views["identifiers"]
     assert "order_no" in views["identifiers"]
+
+
+def test_date_columns_are_detected_and_left_out_of_drift():
+    rng = np.random.default_rng(0)
+    dates = pd.date_range("2020-01-01", periods=400, freq="D").strftime("%Y-%m-%d")
+    df = pd.DataFrame({"day": dates, "code": rng.choice(["a", "b"], 400), "x": rng.normal(size=400)})
+    views = EdaToolKit().build_column_views(df)
+    assert views["datetime_cols"] == ["day"]
+    assert "day" not in views["categorical_features"] + views["entity_keys"]
+    result = DriftAnalyzer().compare(df.iloc[:200], df.iloc[200:])
+    assert "day" not in {c["column"] for c in result["column_drift"]}
+    assert "day" not in result["new_categories"]
+    assert result["date_ranges"]["train"]["day"] == {"min": "2020-01-01", "max": "2020-07-18"}
