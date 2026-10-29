@@ -187,3 +187,27 @@ def test_free_text_and_constant_columns(tmp_path):
     assert roles["user_key"] == "id"
     assert out["constant_columns"] == ["country"]
     assert out["near_constant_columns"] == ["flag (99.3%)"]
+
+
+def test_describe_dataset_target_balance_and_redundant_pairs(tmp_path):
+    rng = np.random.default_rng(0)
+    n = 400
+    city = rng.choice(["Pune", "Delhi", "Goa"], n)
+    x = rng.normal(size=n)
+    df = pd.DataFrame({
+        "city": city,
+        "city_code": pd.Series(city).map({"Pune": "PN", "Delhi": "DL", "Goa": "GA"}),
+        "temp_c": x,
+        "temp_f": x * 1.8 + 32,
+        "other": rng.normal(size=n),
+        "label": np.where(rng.random(n) < 0.1, "yes", "no"),
+    })
+    df.to_csv(tmp_path / "r.csv", index=False)
+    out = describe_dataset(str(tmp_path / "r.csv"), target_col="label")
+    assert out["target"]["type"] == "classification" and out["target"]["n_classes"] == 2
+    assert 5 < out["target"]["minority_pct"] < 15
+    pairs = out["redundant_pairs"]
+    assert any("city" in p and "city_code" in p and "one-to-one" in p for p in pairs)
+    assert any("temp_c" in p and "temp_f" in p for p in pairs)
+    assert not any("other" in p for p in pairs)
+    assert "error" in describe_dataset(str(tmp_path / "r.csv"), target_col="missing")

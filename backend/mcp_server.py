@@ -15,6 +15,8 @@ SEED = 42
 TOP_N = 5
 MAX_DESCRIBE_COLS = 30
 NEAR_CONSTANT_SHARE = 0.99
+REDUNDANT_CORR = 0.999
+MAX_REDUNDANT_PAIRS = 10
 NEAR_PERFECT_R2 = 0.999
 NEAR_PERFECT_BALANCED_ACC = 0.98
 
@@ -124,9 +126,47 @@ def _constant_columns(df) -> dict:
             **({"near_constant_columns": near} if near else {})}
 
 
+def _redundant_pairs(df, views) -> dict:
+    """Categorical pairs that map one-to-one, and numeric pairs with |correlation| >= 0.999."""
+    import itertools
+    pairs = []
+    cats = [c for c in views["categorical_features"] if df[c].nunique() > 1][:50]
+    nunique = {c: df[c].nunique() for c in cats}
+    for a, b in itertools.combinations(cats, 2):
+        if nunique[a] != nunique[b]:
+            continue
+        joint = df[[a, b]].dropna().drop_duplicates()
+        if len(joint) == nunique[a]:
+            pairs.append(f"{a} = {b} (one-to-one)")
+    nums = [c for c in views["numeric_features"] if df[c].nunique() > 1][:100]
+    if len(nums) > 1:
+        corr = df[nums].corr().abs()
+        for i, a in enumerate(nums):
+            for b in nums[i + 1:]:
+                if corr.loc[a, b] >= REDUNDANT_CORR:
+                    pairs.append(f"{a} ~ {b} (|corr| {corr.loc[a, b]:.4f})")
+    return {"redundant_pairs": pairs[:MAX_REDUNDANT_PAIRS]} if pairs else {}
+
+
+def _target_summary(df, target_col: str) -> dict:
+    import pandas as pd
+    _require_target(df, target_col)
+    y = df[target_col].dropna()
+    y_numeric = pd.to_numeric(y, errors="coerce")
+    if y_numeric.notna().all() and y.nunique() > 20:
+        return {"target": {"name": target_col, "type": "regression",
+                           "mean": round(float(y_numeric.mean()), 4), "std": round(float(y_numeric.std()), 4),
+                           "min": float(y_numeric.min()), "max": float(y_numeric.max())}}
+    shares = y.value_counts(normalize=True)
+    return {"target": {"name": target_col, "type": "classification", "n_classes": int(len(shares)),
+                       "class_balance_pct": {str(k): round(float(v) * 100, 2) for k, v in shares.head(10).items()},
+                       "minority_pct": round(float(shares.iloc[-1]) * 100, 2)}}
+
+
 @_guard
-def describe_dataset(csv_path: str, max_rows: int | None = None) -> dict:
-    """Columns, types, inferred roles, row count and missing values. Run first to pick a target column."""
+def describe_dataset(csv_path: str, max_rows: int | None = None, target_col: str | None = None) -> dict:
+    """Columns, types, inferred roles, row count, missing values, constant and redundant columns.
+    Run first to pick a target column; pass target_col to also get its class balance."""
     from backend.eda import EdaToolKit
     df, meta = _load(csv_path, max_rows)
     placeholders = df.attrs.get("placeholders", {})
@@ -159,6 +199,8 @@ def describe_dataset(csv_path: str, max_rows: int | None = None) -> dict:
         "date_ranges": eda.date_ranges(df, views["datetime_cols"]),
         **({"placeholder_missing": placeholders} if placeholders else {}),
         **_constant_columns(df),
+        **_redundant_pairs(df, views),
+        **(_target_summary(df, target_col) if target_col else {}),
     }
 
 
