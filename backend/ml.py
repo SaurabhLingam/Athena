@@ -37,7 +37,8 @@ LEAKAGE_AUC_THRESHOLD = 0.995
 # doesn't collapse on rare positives. Regression: honest features peak at 0.70 R^2 (EV Model Year).
 SINGLE_FEATURE_LEAK_THRESHOLD = {"AUC": 0.90, "balanced_accuracy": 0.93, "R^2": 0.98}
 # At or above this a flagged column is "likely" leakage; below it, "possible".
-SINGLE_FEATURE_LIKELY_LEAK = {"AUC": 0.95, "balanced_accuracy": 0.95, "R^2": 0.95}
+# Binary: genuine features reach AUC ~0.97 (breast cancer worst perimeter), so only >= 0.99 is "likely".
+SINGLE_FEATURE_LIKELY_LEAK = {"AUC": 0.99, "balanced_accuracy": 0.95, "R^2": 0.95}
 
 
 def lgb_params(task_type: str, n_classes: int = 2) -> dict:
@@ -514,8 +515,8 @@ class MLdiagnosticskit:
             else:
                 leakage_score += 10
                 self.add_penalty("Leakage Checks",
-                                 f"Possible leakage, or a very strong genuine predictor: {col} {detail}. "
-                                 "Verify before using.")
+                                 f"Very strong single predictor: {col} {detail}. "
+                                 "Confirm it's available at prediction time.")
 
         id_cols = col_views.get("identifiers", [])
         if id_cols:

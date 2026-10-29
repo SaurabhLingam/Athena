@@ -63,15 +63,16 @@ def test_install_skill_copies_file(tmp_path):
     assert installed.read_text(encoding="utf-8").startswith("---\nname: athena")
 
 
-def test_moderate_real_features_are_not_flagged_but_planted_leak_is():
-    # Binary targets use single-feature AUC tiers (>= 0.90), so breast cancer's AUC ~0.97
-    # "worst" features are flagged as possible/likely too; moderate ones must stay clean.
+def test_strong_real_features_are_possible_not_likely_but_planted_leak_is_likely():
     from sklearn.datasets import load_breast_cancer
     df = load_breast_cancer(as_frame=True).frame
     df["leak"] = df["target"] + np.random.default_rng(0).normal(scale=0.05, size=len(df))
-    flagged = set(_leakage(df)["suspicious_features"])
-    assert "leak" in flagged
-    assert not flagged & {"mean texture", "mean smoothness", "mean symmetry", "texture error"}
+    msgs = _leak_probe(df, "target")
+    assert "Severe leakage risk: leak " in msgs or "Likely leakage: leak " in msgs
+    for col in ("worst perimeter", "worst radius", "worst area", "worst concave points"):
+        assert f"Very strong single predictor: {col} " in msgs, col
+        assert f"Likely leakage: {col} " not in msgs, col
+    assert not any(f": {c} " in msgs for c in ("mean texture", "mean smoothness", "texture error"))
 
 
 def test_weak_id_name_parts_need_near_uniqueness():
@@ -310,7 +311,7 @@ def test_binary_leak_probe_scores_with_auc():
     assert metric == "AUC" and score >= 0.95
     assert MLdiagnosticskit._single_feature_score(honest, pd.Series(y))[1] < 0.80
     msgs = _leak_probe(pd.DataFrame({"strong": strong, "honest": honest, "y": y}), "y")
-    assert "Likely leakage: strong" in msgs and "honest" not in msgs
+    assert "Very strong single predictor: strong" in msgs and "honest" not in msgs
 
 
 def test_rare_positive_yes_no_leak_is_caught():
