@@ -90,7 +90,9 @@ def describe_dataset(csv_path: str, max_rows: int | None = None) -> dict:
         "column_format": "name|dtype|role|n_unique|missing_pct",
         "roles": "num=numeric, cat=categorical, id=identifier, key=entity key, date=date, text=free text",
         "columns": columns,
-        **({"more_columns": len(df.columns) - len(shown)} if len(df.columns) > len(shown) else {}),
+        **({"more_columns": len(df.columns) - len(shown),
+            "hidden_columns": [str(c) for c in df.columns[len(shown):]]}
+           if len(df.columns) > len(shown) else {}),
         "total_missing_pct": round(float(df.isnull().values.mean()) * 100, 2),
         "duplicate_rows": int(df.duplicated().sum()),
         "date_ranges": eda.date_ranges(df, views["datetime_cols"]),

@@ -11,7 +11,7 @@ Every tool accepts `max_rows`: pass it (e.g. `50000`) for CSVs over ~100k rows t
 ## Order
 
 1. **`describe_dataset(csv_path)`** — always first.
-   - Each `columns` entry is `name|dtype|role|n_unique|missing_pct` (roles are explained in `roles`). Only the first 30 columns are listed. If `more_columns` is present and the target isn't among them, ask the user for the target name (it's often the last column) rather than guessing.
+   - Each `columns` entry is `name|dtype|role|n_unique|missing_pct` (roles are explained in `roles`). Only the first 30 columns are listed in detail. If `more_columns` is present, the names of the rest are in `hidden_columns`, so check there for the target too (it's often the last column).
    - Use the exact name from `columns` as the target column. If the user didn't name a target, propose one (a column whose name or role suggests a label, e.g. `target`, `label`, `churn`, `price`) and confirm before continuing.
    - `date` role columns are dates (range in `date_ranges`). They're good candidates for a time-based split before `check_drift`.
    - Note `id` role columns (IDs) and high `missing_pct` columns. They'll come up again in later steps.

@@ -97,6 +97,7 @@ def test_describe_dataset_is_compact_for_wide_files(tmp_path):
     df.to_csv(tmp_path / "wide.csv", index=False)
     out = describe_dataset(str(tmp_path / "wide.csv"))
     assert len(out["columns"]) == 30 and out["more_columns"] == 15
+    assert out["hidden_columns"] == [f"V{i}" for i in range(30, 45)]
     assert len(json.dumps(out, indent=2)) < 2000
 
 
@@ -117,3 +118,13 @@ def test_server_module_does_not_import_heavy_libraries():
             "print(sorted(m for m in ('pandas', 'sklearn', 'lightgbm') if m in sys.modules))")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "[]"
+
+
+def test_describe_dataset_exposes_capped_target_in_hidden_columns(tmp_path):
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame(rng.normal(size=(200, 31)), columns=[f"V{i}" for i in range(31)])
+    df["Class"] = rng.integers(0, 2, 200)
+    df.to_csv(tmp_path / "wide_target_last.csv", index=False)
+    out = describe_dataset(str(tmp_path / "wide_target_last.csv"))
+    assert not any(c.startswith("Class|") for c in out["columns"])
+    assert out["hidden_columns"][-1] == "Class"
