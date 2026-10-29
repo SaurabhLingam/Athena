@@ -402,3 +402,14 @@ def test_id_like_names_need_near_unique_values():
     assert views["identifiers"] == ["record_id"]
     for col in ("shop_id", "postal_area", "branch_ref"):
         assert col in views["categorical_features"], col
+
+
+def test_cli_banner_survives_non_utf8_redirected_output():
+    import os
+    import subprocess
+    import sys
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+    proc = subprocess.run([sys.executable, "-c", "import backend.cli as c; c._banner()"],
+                          capture_output=True, env=env, timeout=60)
+    assert proc.returncode == 0, proc.stderr.decode(errors="replace")
+    assert proc.stdout.strip()

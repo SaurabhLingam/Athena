@@ -29,6 +29,25 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+
+
+def _make_output_safe():
+    """Redirected output on Windows defaults to cp1252, which can't encode the banner's
+    box characters. Write UTF-8 when redirected, and never crash on an unencodable char."""
+    for stream in (sys.stdout, sys.stderr):
+        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+        if encoding == "utf8" or not hasattr(stream, "reconfigure"):
+            continue
+        try:
+            if stream.isatty():
+                stream.reconfigure(errors="replace")
+            else:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
+_make_output_safe()
 console = Console()
 
 BANNER = """
