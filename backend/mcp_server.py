@@ -152,7 +152,7 @@ def run_baselines(csv_path: str, target_col: str, max_rows: int | None = None, n
         y = pd.to_numeric(df[target_col], errors="coerce")
         r2 = 1 - best["rmse"] ** 2 / y.var() if y.var() > 0 else None
         if r2 is not None and r2 > NEAR_PERFECT_R2:
-            warning = (f"Near-perfect fit (R² ≈ {r2:.5f}). Almost certainly leakage: "
+            warning = (f"Near-perfect fit (R^2 ~ {r2:.5f}). Almost certainly leakage: "
                        "check for features that sum or combine into the target.")
     return {
         **({"leakage_warning": warning} if warning else {}),

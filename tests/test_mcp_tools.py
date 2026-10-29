@@ -128,3 +128,18 @@ def test_describe_dataset_exposes_capped_target_in_hidden_columns(tmp_path):
     out = describe_dataset(str(tmp_path / "wide_target_last.csv"))
     assert not any(c.startswith("Class|") for c in out["columns"])
     assert out["hidden_columns"][-1] == "Class"
+
+
+def test_tool_outputs_are_ascii(tmp_path):
+    import json
+    rng = np.random.default_rng(0)
+    a = rng.uniform(0, 100, 400).round(2)
+    b = rng.uniform(0, 300, 400).round(2)
+    df = pd.DataFrame({"a": a, "b": b, "total": a + b})
+    df.to_csv(tmp_path / "sum.csv", index=False)
+    path = str(tmp_path / "sum.csv")
+    outs = [describe_dataset(path), check_leakage(path, "total"), run_baselines(path, "total"),
+            check_drift(path, path)]
+    assert "leakage_warning" in outs[2]
+    for out in outs:
+        assert json.dumps(out, ensure_ascii=False).isascii(), out

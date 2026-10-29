@@ -427,7 +427,7 @@ class MLdiagnosticskit:
             elif shift > 0.95:
                 
                 if col:
-                    self.add_recommendation("Leakage Checks", f"Review {col} — very high target separation (shift={shift:.3f}), verify it's not derived from target")
+                    self.add_recommendation("Leakage Checks", f"Review {col}: very high target separation (shift={shift:.3f}), verify it's not derived from target")
 
         id_cols = col_views.get("identifiers", [])
         if id_cols:
