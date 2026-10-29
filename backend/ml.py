@@ -496,29 +496,28 @@ class MLdiagnosticskit:
             )
 
         try:
-            features = df.drop(columns=[target_col])
-            dup_frac = features.duplicated().mean()
-            # With few distinct values per feature, identical rows are expected by chance
-            # (survey answers, binary flags), so they are reported but not scored.
-            log_combinations = float(np.log10(features.nunique(dropna=False).clip(lower=1)).sum())
-            chance_duplicates = log_combinations < np.log10(max(len(features), 1) * 10)
-            if dup_frac > 0.10 and chance_duplicates:
-                self.add_recommendation(
-                    "Leakage Checks",
-                    f"{dup_frac:.1%} duplicate feature rows, expected because the features take few distinct "
-                    "values. Not counted as leakage, but deduplicate before splitting if rows are repeated records"
-                )
-            elif dup_frac > 0.20:
+            # Only exact duplicate rows (features + target) are leakage: copies of one record
+            # can land in both train and test. Rows that share features but differ in target
+            # are ordinary overlap and are reported as information.
+            row_dup_frac = df.duplicated().mean()
+            feature_dup_frac = df.drop(columns=[target_col]).duplicated().mean()
+            if row_dup_frac > 0.20:
                 leakage_score += 25
                 self.add_penalty(
                     "Leakage Checks",
-                    f"{dup_frac:.1%} duplicate feature rows detected, high risk of train/test leakage. Deduplicate before splitting"
+                    f"{row_dup_frac:.1%} exact duplicate rows (features + target), high risk of train/test leakage. Deduplicate before splitting"
                 )
-            elif dup_frac > 0.10:
+            elif row_dup_frac > 0.10:
                 leakage_score += 10
                 self.add_penalty(
                     "Leakage Checks",
-                    f"{dup_frac:.1%} duplicate feature rows detected, possible train/test leakage"
+                    f"{row_dup_frac:.1%} exact duplicate rows (features + target), possible train/test leakage"
+                )
+            elif feature_dup_frac > 0.10:
+                self.add_recommendation(
+                    "Leakage Checks",
+                    f"{feature_dup_frac:.1%} rows share their features with another row but have a different "
+                    "target. Not counted as leakage"
                 )
         except Exception as e:
             self.add_recommendation("Leakage Checks", f"Duplicate-row check could not run: {e}")

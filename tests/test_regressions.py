@@ -192,22 +192,22 @@ def test_integer_columns_are_numeric_unless_few_values_or_code_names():
         assert col in views["categorical_features"] + views["identifiers"]
 
 
-def test_duplicates_in_low_cardinality_features_are_not_leakage():
+def test_only_exact_duplicate_rows_count_as_leakage():
     rng = np.random.default_rng(0)
-    n = 2000
-    low = pd.DataFrame({f"q{i}": rng.integers(0, 2, n) for i in range(5)})  # 32 possible rows
-    low["target"] = rng.integers(0, 2, n)
+    # Same features, different targets: overlap, not leakage
+    base = pd.DataFrame({"q1": rng.integers(0, 3, 300), "q2": rng.normal(size=300)})
+    overlap = pd.concat([base.assign(target=0), base.assign(target=1)], ignore_index=True)
     report = MLdiagnosticskit()
     eda = EdaToolKit()
-    out = report.run_leakage_checks(low, eda.feature_correlation(low, "target"),
-                                    eda.build_column_views(low, "target"), "target")
+    out = report.run_leakage_checks(overlap, eda.feature_correlation(overlap, "target"),
+                                    eda.build_column_views(overlap, "target"), "target")
     assert out["leakage_score"] == 0
-    assert any("duplicate feature rows" in r for r in report.recommendation_buckets["Leakage Checks"])
+    assert any("different target" in r for r in report.recommendation_buckets["Leakage Checks"])
 
-    # Repeated records with continuous features are still scored
-    rich = pd.DataFrame({"a": rng.normal(size=500), "b": rng.normal(size=500)})
-    rich = pd.concat([rich] * 2, ignore_index=True).assign(target=rng.integers(0, 2, 1000))
-    assert _leakage(rich)["leakage_score"] >= 25
+    # Exact copies of whole records are scored
+    rich = pd.DataFrame({"a": rng.normal(size=500), "b": rng.normal(size=500),
+                         "target": rng.integers(0, 2, 500)})
+    assert _leakage(pd.concat([rich] * 2, ignore_index=True))["leakage_score"] >= 25
 
 
 def test_dates_use_one_day_first_or_month_first_format_per_column():
