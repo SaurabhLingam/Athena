@@ -326,7 +326,7 @@ class MLdiagnosticskit:
                     "component_scores": self.component_scores
                 }
 
-        if leakage_report["leakage_score"] > 90:
+        if leakage_report["leakage_score"] >= 90:
 
 
             return {
