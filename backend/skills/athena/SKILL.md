@@ -26,7 +26,7 @@ Every tool accepts `max_rows`: pass it (e.g. `50000`) for CSVs over ~100k rows t
    - `overall_drift_score` is 0–100. Below 25 is negligible, 25–50 moderate, above 50 significant.
    - `top_drifted` lists per-column `drift_score`. Numeric columns include KS statistic, p-value and both means, so describe the direction of the shift.
    - `new_categories` are values seen only in the current data. A model will treat them as unseen.
-   - Columns with ≥ 95% unique values are treated as ID-like and skipped. Continuous high-precision floats can fall into this, so say so if a column the user cares about is missing from the output.
+   - Identifier columns (ID-like names, or near-unique integer/string columns) are skipped. If a column the user cares about is missing from the output, that's why.
 
 ## Reporting
 
