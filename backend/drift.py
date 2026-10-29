@@ -2,16 +2,18 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 
+try:
+    from backend.eda import EdaToolKit
+except ImportError:
+    from eda import EdaToolKit
+
 
 class DriftAnalyzer:
     def compare(self, train_df: pd.DataFrame, test_df: pd.DataFrame) -> dict:
         common_cols = [c for c in train_df.columns if c in test_df.columns]
 
-        n_rows = len(train_df)
-        common_cols = [
-            c for c in common_cols
-            if train_df[c].nunique() / n_rows < 0.95
-        ]
+        id_cols = set(EdaToolKit().build_column_views(train_df)["identifiers"])
+        common_cols = [c for c in common_cols if c not in id_cols]
 
         column_drift = []
         new_categories = {}

@@ -52,7 +52,8 @@ class EdaToolKit:
 
 
 
-            if unique_ratio >= 0.96:
+            # Near-unique floats are continuous measurements, not IDs.
+            if unique_ratio >= 0.96 and not pd.api.types.is_float_dtype(s):
                 identifiers.append(col)
                 
                 continue
