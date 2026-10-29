@@ -341,3 +341,32 @@ def test_multiclass_leak_probe_weights_rare_classes():
     copy = np.where(rng.random(n) < 0.97, y, "a")
     metric, score = MLdiagnosticskit._single_feature_score(pd.Series(copy), pd.Series(y))
     assert metric == "balanced_accuracy" and score >= 0.95
+
+
+def _labels(counts):
+    return pd.Series([k for k, n in counts.items() for _ in range(n)])
+
+
+def test_class_balance_levels():
+    from backend.eda import class_balance
+    cases = [
+        ({"a": 50, "b": 50}, "balanced"),
+        ({"a": 75, "b": 25}, "imbalanced"),
+        ({"a": 97, "b": 3}, "severe"),
+        ({"a": 25, "b": 25, "c": 25, "d": 25}, "balanced"),
+        ({"a": 25, "b": 20, "c": 20, "d": 17, "e": 15, "f": 3}, "severe"),
+    ]
+    for counts, level in cases:
+        b = class_balance(_labels(counts))
+        assert b["level"] == level, (counts, b)
+        smallest = b["smallest_class"]
+        assert counts[smallest] == min(counts.values())
+        assert b["smallest_class_pct"] == round(100 * counts[smallest] / sum(counts.values()), 2)
+        assert b["balance_ratio"] == round(counts[smallest] / sum(counts.values()) * len(counts), 4)
+        assert ("message" in b) == (level != "balanced")
+
+
+def test_target_insights_uses_class_balance():
+    df = pd.DataFrame({"x": range(200), "y": ["a"] * 194 + ["b"] * 6})
+    ti = EdaToolKit().target_insights(df, "y")
+    assert ti["class_balance"]["level"] == "severe" and ti["is_imbalanced"]

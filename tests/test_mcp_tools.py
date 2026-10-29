@@ -205,7 +205,7 @@ def test_describe_dataset_target_balance_and_redundant_pairs(tmp_path):
     df.to_csv(tmp_path / "r.csv", index=False)
     out = describe_dataset(str(tmp_path / "r.csv"), target_col="label")
     assert out["target"]["type"] == "classification" and out["target"]["n_classes"] == 2
-    assert 5 < out["target"]["minority_pct"] < 15
+    assert 5 < out["target"]["smallest_class_pct"] < 15
     pairs = out["redundant_pairs"]
     assert any("city" in p and "city_code" in p and "one-to-one" in p for p in pairs)
     assert any("temp_c" in p and "temp_f" in p for p in pairs)
@@ -269,3 +269,17 @@ def test_positive_nines_sentinels_need_to_repeat_and_be_far():
     assert counts["income"] == {"999999": 3}
     assert "price" not in counts and "once" not in counts
     assert df["age"].isna().sum() == 5
+
+
+def test_class_imbalance_reported_by_describe_and_baselines(tmp_path):
+    rng = np.random.default_rng(0)
+    n = 1000
+    y = np.where(np.arange(n) < 14, "fraud", "ok")          # 1.4% minority
+    df = pd.DataFrame({"x1": rng.normal(size=n), "x2": rng.normal(size=n), "y": y})
+    df.to_csv(tmp_path / "imb.csv", index=False)
+    target = describe_dataset(str(tmp_path / "imb.csv"), target_col="y")["target"]
+    assert target["smallest_class"] == "fraud" and target["smallest_class_pct"] == 1.4
+    assert target["imbalance"] == "severe" and "imbalance_warning" in target
+    base = run_baselines(str(tmp_path / "imb.csv"), "y")
+    assert base["class_balance"]["balance_ratio"] == 0.028
+    assert "imbalance_warning" in base["class_balance"]

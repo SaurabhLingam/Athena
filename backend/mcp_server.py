@@ -188,10 +188,23 @@ def _target_summary(df, target_col: str) -> dict:
         return {"target": {"name": target_col, "type": "regression",
                            "mean": round(float(y_numeric.mean()), 4), "std": round(float(y_numeric.std()), 4),
                            "min": float(y_numeric.min()), "max": float(y_numeric.max())}}
-    shares = y.value_counts(normalize=True)
-    return {"target": {"name": target_col, "type": "classification", "n_classes": int(len(shares)),
-                       "class_balance_pct": {str(k): round(float(v) * 100, 2) for k, v in shares.head(10).items()},
-                       "minority_pct": round(float(shares.iloc[-1]) * 100, 2)}}
+    return {"target": {"name": target_col, "type": "classification", **_balance_fields(y)}}
+
+
+def _balance_fields(y) -> dict:
+    """Compact view of the shared eda.class_balance, with a note or warning when imbalanced."""
+    from backend.eda import class_balance
+    b = class_balance(y)
+    return {
+        "n_classes": b["n_classes"],
+        "class_balance_pct": {str(k): round(v * 100, 2) for k, v in list(b["class_shares"].items())[:10]},
+        "smallest_class": str(b.get("smallest_class")),
+        "smallest_class_pct": b.get("smallest_class_pct"),
+        "balance_ratio": b.get("balance_ratio"),
+        "imbalance": b["level"],
+        **({"imbalance_warning" if b["level"] == "severe" else "imbalance_note": b["message"]}
+           if "message" in b else {}),
+    }
 
 
 @_guard
@@ -297,6 +310,7 @@ def run_baselines(csv_path: str, target_col: str, max_rows: int | None = None, n
         "task_type": task_type,
         "metric": result["metric"],
         "metric_direction": "higher_is_better" if result["metric"] == "balanced_accuracy" else "lower_is_better",
+        **({"class_balance": _balance_fields(df[target_col])} if task_type == "classification" else {}),
         "n_samples": result["n_samples"],
         "n_features": result["n_features"],
         "winner": result["winner"],

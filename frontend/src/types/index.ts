@@ -225,7 +225,7 @@ export interface TargetInsights {
   missing_pct: number;
   task_type: "classification" | "regression";
   class_distribution?: Record<string, number>;
-  imbalance_ratio?: number;
+  class_balance?: { n_classes: number; smallest_class?: string | number; smallest_class_pct?: number; balance_ratio?: number; level: "balanced" | "imbalanced" | "severe"; message?: string };
   is_imbalanced?: boolean;
   numeric_feature_separation?: Record<string, any>;
   target_stats?: Record<string, number>;

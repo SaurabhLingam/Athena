@@ -274,8 +274,7 @@ class MLdiagnosticskit:
         elif task_type == "classification":
             class_dist = target_insights.get("class_distribution", {})
             n_classes = len(class_dist)
-            imbalance_ratio = target_insights.get("imbalance_ratio", 1)
-            is_imbalance = target_insights.get("is_imbalanced", False)
+            balance = target_insights.get("class_balance", {})
 
             if n_classes < 2:
                 self.component_scores["trainability"] = 0
@@ -288,13 +287,12 @@ class MLdiagnosticskit:
                     "issue": "Only one target class present"
                 }
 
-            if is_imbalance:
-                if imbalance_ratio > 5:
-                    self.component_scores["trainability"] -= 30
-                    self.add_penalty("Labeled Diagnostics","Severe class imbalance detected")
-                elif imbalance_ratio > 2:
-                    self.component_scores["trainability"] -= 15
-                    self.add_recommendation("Labeled Diagnostics", "Class imbalance detected, consider sampling or class weights")
+            if balance.get("level") == "severe":
+                self.component_scores["trainability"] -= 30
+                self.add_penalty("Labeled Diagnostics", balance["message"])
+            elif balance.get("level") == "imbalanced":
+                self.component_scores["trainability"] -= 15
+                self.add_recommendation("Labeled Diagnostics", balance["message"])
 
             metric_name = "balanced_accuracy"
 

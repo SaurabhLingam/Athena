@@ -12,7 +12,7 @@ Every tool accepts `max_rows`: pass it (e.g. `50000`) for CSVs over ~100k rows t
 
 1. **`describe_dataset(csv_path)`** — always first.
    - Each `columns` entry is `name|dtype|role|n_unique|missing_pct` (roles are explained in `roles`). Only the first 30 columns are listed in detail. If `more_columns` is present, the names of the rest are in `hidden_columns`, so check there for the target too (it's often the last column).
-   - Use the exact name from `columns` as the target column. Once chosen, call `describe_dataset` again with `target_col` to get `target.class_balance_pct` and `minority_pct`. Mention heavy imbalance (minority below about 10%) when you report baselines.
+   - Use the exact name from `columns` as the target column. Once chosen, call `describe_dataset` again with `target_col` to get `target.class_balance_pct`, `smallest_class_pct` and `balance_ratio` (smallest share x number of classes; 1.0 = even). `run_baselines` repeats this under `class_balance`. Mention any `imbalance_warning` (ratio under 0.2) when you report baselines.
    - `placeholder_missing` lists values such as `?`, `N/A` or `-999` that were counted as missing. `constant_columns` and `near_constant_columns` carry little or no information. `redundant_pairs` are columns that duplicate each other (one-to-one or |corr| ≥ 0.999), so one of each pair can be dropped. If the user didn't name a target, propose one (a column whose name or role suggests a label, e.g. `target`, `label`, `churn`, `price`) and confirm before continuing.
    - `date` role columns are dates (range in `date_ranges`). They're good candidates for a time-based split before `check_drift`.
    - Note `id` role columns (IDs) and high `missing_pct` columns. They'll come up again in later steps.

@@ -31,6 +31,42 @@ def _range(d: pd.Series) -> dict:
             "max": str(d.max().date()) if d.notna().any() else None}
 
 
+# Balance ratio = smallest class share x number of classes (1.0 = an even split).
+# For binary targets 0.6 / 0.2 mean a smallest class under 30% / 10%.
+IMBALANCED_RATIO = 0.6
+SEVERE_IMBALANCE_RATIO = 0.2
+
+
+def class_balance(y: pd.Series) -> dict:
+    """Class shares of a classification target, measured against an even split.
+    level: "balanced", "imbalanced" (info, ratio < 0.6) or "severe" (warning, ratio < 0.2)."""
+    shares = y.dropna().value_counts(normalize=True)
+    n_classes = int(len(shares))
+    if n_classes == 0:
+        return {"n_classes": 0, "class_shares": {}, "level": "balanced"}
+    native = lambda k: k.item() if hasattr(k, "item") else k  # JSON-safe labels
+    smallest, smallest_share = native(shares.index[-1]), float(shares.iloc[-1])
+    ratio = smallest_share * n_classes
+    out = {
+        "n_classes": n_classes,
+        "class_shares": {native(k): float(v) for k, v in shares.items()},
+        "smallest_class": smallest,
+        "smallest_class_pct": round(smallest_share * 100, 2),
+        "balance_ratio": round(ratio, 4),
+        "level": "balanced",
+    }
+    if n_classes >= 2 and ratio < IMBALANCED_RATIO:
+        severe = ratio < SEVERE_IMBALANCE_RATIO
+        out["level"] = "severe" if severe else "imbalanced"
+        out["message"] = (
+            f"{'Severe class imbalance' if severe else 'Class imbalance'}: smallest class "
+            f"'{smallest}' is {smallest_share:.1%} of rows (balance ratio {ratio:.2f}, 1.0 = even). "
+            + ("Use class weights or resampling, and judge models by balanced accuracy or AUC."
+               if severe else "Consider class weights.")
+        )
+    return out
+
+
 class EdaToolKit:
     def __init__(self, cfg: dict = None):
         try:
@@ -613,16 +649,12 @@ class EdaToolKit:
         }
 
         if is_classification:
-            balance = target.value_counts(normalize=True)
-
-            max_ratio = float(balance.max())
-            min_ratio = float(balance.min()) if balance.min() > 0 else None
-
+            balance = class_balance(target)
             insights.update({
                 "task_type": "classification",
-                "class_distribution": balance.astype(float).to_dict(),
-                "imbalance_ratio": float(max_ratio / min_ratio) if min_ratio else None,
-                "is_imbalanced": bool(max_ratio > 0.7)
+                "class_distribution": balance["class_shares"],
+                "class_balance": balance,
+                "is_imbalanced": balance["level"] != "balanced",
             })
 
             numeric_features = [
