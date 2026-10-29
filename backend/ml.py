@@ -25,8 +25,10 @@ warnings.filterwarnings("ignore", category=UserWarning)
 SEED = 42
 
 
-# Same cut-off for |correlation| and single-feature AUC.
 LEAKAGE_CORR_THRESHOLD = 0.95
+# Single-feature AUC reaches 0.95 far more easily than |correlation| does,
+# so strong-but-honest predictors need a stricter cut-off.
+LEAKAGE_AUC_THRESHOLD = 0.995
 
 
 def lgb_params(task_type: str, n_classes: int = 2) -> dict:
@@ -362,14 +364,15 @@ class MLdiagnosticskit:
 
     @staticmethod
     def _numeric_target_strength(feature: pd.Series, target: pd.Series):
-        """|Pearson| for regression targets, single-feature AUC (mean one-vs-rest) for classification."""
+        """Returns (strength, threshold): |Pearson| for regression targets,
+        single-feature AUC (mean one-vs-rest) for classification."""
         pair = pd.DataFrame({"x": feature, "y": target}).dropna()
         if len(pair) < 10 or pair["x"].nunique() < 2:
             return None
         y_numeric = pd.to_numeric(pair["y"], errors="coerce")
         if y_numeric.notna().all() and y_numeric.nunique() > 10:
             r = pair["x"].corr(y_numeric)
-            return None if pd.isna(r) else abs(float(r))
+            return None if pd.isna(r) else (abs(float(r)), LEAKAGE_CORR_THRESHOLD)
         classes = pair["y"].unique()
         if len(classes) < 2:
             return None
@@ -379,7 +382,7 @@ class MLdiagnosticskit:
         for cls in classes:
             auc = roc_auc_score(pair["y"] == cls, pair["x"])
             aucs.append(max(auc, 1 - auc))
-        return float(np.mean(aucs))
+        return float(np.mean(aucs)), LEAKAGE_AUC_THRESHOLD
 
     def run_leakage_checks(self, df: pd.DataFrame, feature_correlation: Dict, col_views: Dict, target_col: str):
         leakage_score = 0
@@ -392,15 +395,15 @@ class MLdiagnosticskit:
                 suspicious.append(col)
                 self.add_penalty("Leakage Checks", f"Severe leakage risk: {col} is highly correlated with target")
 
-        # Numeric features with few distinct values are routed to categorical_features
-        # above, which can hide a near-copy of the target; score every numeric feature.
+        # Low-cardinality numeric features are routed to categorical_features,
+        # where the distribution-shift check can hide a near-copy of the target.
         numeric_candidates = [
-            c for c in col_views.get("numeric_features", []) + col_views.get("categorical_features", [])
+            c for c in col_views.get("categorical_features", [])
             if c not in suspicious and c in df.columns and pd.api.types.is_numeric_dtype(df[c])
         ]
         for col in numeric_candidates:
-            strength = self._numeric_target_strength(df[col], df[target_col])
-            if strength is not None and strength > LEAKAGE_CORR_THRESHOLD:
+            scored = self._numeric_target_strength(df[col], df[target_col])
+            if scored is not None and scored[0] > scored[1]:
                 leakage_score += 40
                 suspicious.append(col)
                 self.add_penalty("Leakage Checks", f"Severe leakage risk: {col} is highly correlated with target")

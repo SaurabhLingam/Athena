@@ -61,3 +61,12 @@ def test_install_skill_copies_file(tmp_path):
     installed = tmp_path / "athena" / "SKILL.md"
     assert installed.is_file()
     assert installed.read_text(encoding="utf-8").startswith("---\nname: athena")
+
+
+def test_strong_real_features_are_not_flagged_but_planted_leak_is():
+    from sklearn.datasets import load_breast_cancer
+    df = load_breast_cancer(as_frame=True).frame
+    df["leak"] = df["target"] + np.random.default_rng(0).normal(scale=0.05, size=len(df))
+    flagged = set(_leakage(df)["suspicious_features"])
+    assert "leak" in flagged
+    assert not flagged & {"worst perimeter", "worst radius", "worst area", "worst concave points", "mean concave points"}
