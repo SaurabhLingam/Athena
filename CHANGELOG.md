@@ -16,5 +16,8 @@
 - Model Arena classifiers use balanced class weights, so baselines on imbalanced data are no longer dominated by the majority class (BRFSS diabetes: balanced accuracy 0.575 → 0.754).
 
 ### Changed
-- `describe_dataset` lists the first 30 columns as compact `name|dtype|role|n_unique|missing_pct` strings, plus a count of the rest. `check_drift`'s `top_drifted` omits columns with a drift score of 0.
+- `describe_dataset` lists the first 30 columns as compact `name|dtype|role|n_unique|missing_pct` strings, plus a count and the names (`hidden_columns`) of the rest. `check_drift`'s `top_drifted` omits columns with a drift score of 0.
 - The MCP server loads pandas, scikit-learn and LightGBM on first use, cutting startup from about 5.8 s to 2.6 s.
+
+### Known issues
+- Column roles depend on the dtype pandas infers. A float column whose values are all whole numbers is read as integers when the file stores them without decimals, and is then classed as an entity key or category instead of a numeric feature. Example: creditcard `Time` read from only its first 50k rows becomes integer-typed. `max_rows` isn't affected, because it reads the whole file before sampling.
